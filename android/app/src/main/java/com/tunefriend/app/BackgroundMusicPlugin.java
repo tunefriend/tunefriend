@@ -35,6 +35,13 @@ public class BackgroundMusicPlugin extends Plugin {
             }
 
             @Override
+            public void onTrackAdvanced(String trackId) {
+                JSObject data = new JSObject();
+                data.put("trackId", trackId != null ? trackId : "");
+                notifyListeners("trackAdvanced", data);
+            }
+
+            @Override
             public void onError(String message) {
                 JSObject data = new JSObject();
                 data.put("message", message);
@@ -69,12 +76,46 @@ public class BackgroundMusicPlugin extends Plugin {
         intent.putExtra("title", call.getString("title", ""));
         intent.putExtra("artist", call.getString("artist", ""));
         intent.putExtra("artworkUrl", call.getString("artworkUrl", ""));
+        intent.putExtra("trackId", call.getString("trackId", ""));
+        intent.putExtra("nextUrl", call.getString("nextUrl", ""));
+        intent.putExtra("nextTitle", call.getString("nextTitle", ""));
+        intent.putExtra("nextArtist", call.getString("nextArtist", ""));
+        intent.putExtra("nextArtworkUrl", call.getString("nextArtworkUrl", ""));
+        intent.putExtra("nextTrackId", call.getString("nextTrackId", ""));
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getContext().startForegroundService(intent);
         } else {
             getContext().startService(intent);
         }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void setNextTrack(PluginCall call) {
+        String nextUrl = call.getString("nextUrl");
+        if (nextUrl == null || nextUrl.isEmpty()) {
+            call.resolve();
+            return;
+        }
+
+        Intent intent = new Intent(getContext(), MusicPlaybackService.class);
+        intent.setAction(MusicPlaybackService.ACTION_SET_NEXT);
+        intent.putExtra("nextUrl", nextUrl);
+        intent.putExtra("nextTitle", call.getString("nextTitle", ""));
+        intent.putExtra("nextArtist", call.getString("nextArtist", ""));
+        intent.putExtra("nextArtworkUrl", call.getString("nextArtworkUrl", ""));
+        intent.putExtra("nextTrackId", call.getString("nextTrackId", ""));
+        getContext().startService(intent);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void clearNextTrack(PluginCall call) {
+        Intent intent = new Intent(getContext(), MusicPlaybackService.class);
+        intent.setAction(MusicPlaybackService.ACTION_SET_NEXT);
+        intent.putExtra("nextUrl", "");
+        getContext().startService(intent);
         call.resolve();
     }
 
@@ -108,6 +149,7 @@ public class BackgroundMusicPlugin extends Plugin {
         ret.put("position", MusicPlaybackService.getPositionMs() / 1000.0);
         ret.put("duration", MusicPlaybackService.getDurationMs() / 1000.0);
         ret.put("playing", MusicPlaybackService.isCurrentlyPlaying());
+        ret.put("trackId", MusicPlaybackService.getCurrentTrackId());
         call.resolve(ret);
     }
 

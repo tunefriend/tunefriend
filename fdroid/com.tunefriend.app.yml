@@ -1,5 +1,8 @@
 # Copy to fdroiddata/metadata/com.tunefriend.app.yml when submitting.
 # Repo: https://gitlab.com/fdroid/fdroiddata
+#
+# Summary and description are read from fastlane/metadata/android/en-US/
+# Do not add Summary or Description fields here.
 
 Categories:
   - Multimedia
@@ -15,9 +18,9 @@ RepoType: git
 Repo: https://github.com/tunefriend/tunefriend.git
 
 Builds:
-  - versionName: '2.0'
-    versionCode: 10
-    commit: v2.0
+  - versionName: '2.5'
+    versionCode: 15
+    commit: 54a911eb983a5855d5f6541f6216af164463328b
     subdir: android/app
     sudo:
       - apt-get update
@@ -42,5 +45,5 @@ Builds:
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
 UpdateCheckData: android/app/build.gradle|versionCode\s(\d+)|.|versionName\s\"([^\"]+)\"
-CurrentVersion: '2.0'
-CurrentVersionCode: 10
+CurrentVersion: '2.5'
+CurrentVersionCode: 15

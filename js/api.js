@@ -123,8 +123,8 @@ export class SubsonicAPI {
     };
   }
 
-  async getAlbumList(type = "newest", size = 30) {
-    const r = await this._fetch("getAlbumList2.view", { type, size });
+  async getAlbumList(type = "newest", size = 30, offset = 0) {
+    const r = await this._fetch("getAlbumList2.view", { type, size, offset });
     return (r.albumList2?.album || []).map((al) => ({
       id: al.id,
       name: al.name,
@@ -181,10 +181,16 @@ export class SubsonicAPI {
     return `${this.serverUrl}/rest/getCoverArt.view?${params}`;
   }
 
-  streamUrl(songId) {
+  streamUrl(songId, { transcode } = {}) {
     const params = this._authParams();
     params.set("id", songId);
-    params.set("maxBitRate", String(loadSettings().bitrate || 320));
+    // Transcoded streams can't be seeked in Android's native player — use original on device.
+    const useTranscode = transcode ?? !isNativeApp();
+    if (useTranscode) {
+      params.set("maxBitRate", String(loadSettings().bitrate || 320));
+    } else {
+      params.set("estimateContentLength", "true");
+    }
     if (this.useProxy) {
       return `/api/proxy?server=${encodeURIComponent(this.serverUrl)}&endpoint=stream.view&${params}`;
     }

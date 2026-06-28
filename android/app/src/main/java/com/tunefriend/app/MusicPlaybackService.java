@@ -46,6 +46,7 @@ public class MusicPlaybackService extends Service {
     public static final String ACTION_STOP = "STOP";
     public static final String ACTION_PREVIOUS = "PREVIOUS";
     public static final String ACTION_NEXT = "NEXT";
+    public static final String ACTION_SET_NEXT = "SET_NEXT";
 
     private static PlaybackCallback callback;
     private static MediaControlCallback mediaControlCallback;
@@ -61,12 +62,22 @@ public class MusicPlaybackService extends Service {
     private String currentTitle = "";
     private String currentArtist = "";
     private String currentArtworkUrl = "";
+    private String currentTrackId = "";
     private Bitmap currentAlbumArt = null;
     private boolean isPaused = false;
+
+    private String nextUrl = null;
+    private String nextTitle = "";
+    private String nextArtist = "";
+    private String nextArtworkUrl = "";
+    private String nextTrackId = "";
+    private boolean isPrepared = false;
+    private boolean releasingPlayer = false;
 
     public interface PlaybackCallback {
         void onPrepared();
         void onEnded();
+        void onTrackAdvanced(String trackId);
         void onError(String message);
     }
 
@@ -111,12 +122,25 @@ public class MusicPlaybackService extends Service {
         }
     }
 
+    public static String getCurrentTrackId() {
+        return instance != null ? instance.currentTrackId : "";
+    }
+
     public static void seekToMs(int ms) {
-        if (instance == null || instance.mediaPlayer == null) return;
+        if (instance == null || instance.mediaPlayer == null || !instance.isPrepared) return;
         try {
-            instance.mediaPlayer.seekTo(Math.max(0, ms));
+            int target = Math.max(0, ms);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                instance.mediaPlayer.seekTo((long) target, MediaPlayer.SEEK_CLOSEST_SYNC);
+            } else {
+                instance.mediaPlayer.seekTo(target);
+            }
             instance.updatePlaybackState(!instance.isPaused);
         } catch (Exception ignored) {}
+    }
+
+    public static boolean isPrepared() {
+        return instance != null && instance.isPrepared;
     }
 
     @Override
@@ -147,12 +171,23 @@ public class MusicPlaybackService extends Service {
 
             @Override
             public void onSkipToNext() {
-                dispatchSkipNext();
+                if (!advanceToNextTrack()) {
+                    dispatchSkipNext();
+                }
             }
 
             @Override
             public void onSkipToPrevious() {
-                dispatchSkipPrevious();
+                if (getPositionMs() > 3000) {
+                    seekToMs(0);
+                } else {
+                    dispatchSkipPrevious();
+                }
+            }
+
+            @Override
+            public void onSeekTo(long pos) {
+                seekToMs((int) pos);
             }
         });
         mediaSession.setActive(true);
@@ -168,7 +203,22 @@ public class MusicPlaybackService extends Service {
                     intent.getStringExtra("url"),
                     intent.getStringExtra("title"),
                     intent.getStringExtra("artist"),
-                    intent.getStringExtra("artworkUrl")
+                    intent.getStringExtra("artworkUrl"),
+                    intent.getStringExtra("trackId"),
+                    intent.getStringExtra("nextUrl"),
+                    intent.getStringExtra("nextTitle"),
+                    intent.getStringExtra("nextArtist"),
+                    intent.getStringExtra("nextArtworkUrl"),
+                    intent.getStringExtra("nextTrackId")
+                );
+                break;
+            case ACTION_SET_NEXT:
+                setNextTrackInfo(
+                    intent.getStringExtra("nextUrl"),
+                    intent.getStringExtra("nextTitle"),
+                    intent.getStringExtra("nextArtist"),
+                    intent.getStringExtra("nextArtworkUrl"),
+                    intent.getStringExtra("nextTrackId")
                 );
                 break;
             case ACTION_PAUSE:
@@ -181,22 +231,55 @@ public class MusicPlaybackService extends Service {
                 stopPlayback();
                 break;
             case ACTION_PREVIOUS:
-                dispatchSkipPrevious();
+                if (getPositionMs() > 3000) {
+                    seekToMs(0);
+                } else {
+                    dispatchSkipPrevious();
+                }
                 break;
             case ACTION_NEXT:
-                dispatchSkipNext();
+                if (!advanceToNextTrack()) {
+                    dispatchSkipNext();
+                }
                 break;
         }
         return START_STICKY;
     }
 
-    private void play(String url, String title, String artist, String artworkUrl) {
+    private void setNextTrackInfo(String url, String title, String artist, String artworkUrl, String trackId) {
+        nextUrl = url;
+        nextTitle = title != null ? title : "";
+        nextArtist = artist != null ? artist : "";
+        nextArtworkUrl = artworkUrl != null ? artworkUrl : "";
+        nextTrackId = trackId != null ? trackId : "";
+    }
+
+    private boolean advanceToNextTrack() {
+        if (nextUrl == null || nextUrl.isEmpty()) return false;
+
+        String url = nextUrl;
+        String title = nextTitle;
+        String artist = nextArtist;
+        String artworkUrl = nextArtworkUrl;
+        String trackId = nextTrackId;
+
+        setNextTrackInfo(null, "", "", "", "");
+        play(url, title, artist, artworkUrl, trackId, null, "", "", "", "");
+        if (callback != null) callback.onTrackAdvanced(trackId);
+        return true;
+    }
+
+    private void play(String url, String title, String artist, String artworkUrl, String trackId,
+                      String nextUrl, String nextTitle, String nextArtist, String nextArtworkUrl, String nextTrackId) {
         if (url == null || url.isEmpty()) return;
         currentTitle = title != null ? title : "TuneFriend";
         currentArtist = artist != null ? artist : "";
         currentArtworkUrl = artworkUrl != null ? artworkUrl : "";
+        currentTrackId = trackId != null ? trackId : "";
         currentAlbumArt = null;
         isPaused = false;
+        isPrepared = false;
+        setNextTrackInfo(nextUrl, nextTitle, nextArtist, nextArtworkUrl, nextTrackId);
 
         if (mediaSession != null) {
             mediaSession.setActive(true);
@@ -223,6 +306,7 @@ public class MusicPlaybackService extends Service {
         try {
             mediaPlayer.setDataSource(url);
             mediaPlayer.setOnPreparedListener(mp -> {
+                isPrepared = true;
                 mp.start();
                 isPaused = false;
                 updatePlaybackState(true);
@@ -230,9 +314,14 @@ public class MusicPlaybackService extends Service {
                 if (callback != null) callback.onPrepared();
             });
             mediaPlayer.setOnCompletionListener(mp -> {
-                if (callback != null) callback.onEnded();
+                isPrepared = false;
+                if (!advanceToNextTrack() && callback != null) {
+                    callback.onEnded();
+                }
             });
             mediaPlayer.setOnErrorListener((mp, what, extra) -> {
+                if (releasingPlayer) return true;
+                isPrepared = false;
                 if (callback != null) callback.onError("Playback error");
                 return true;
             });
@@ -345,13 +434,20 @@ public class MusicPlaybackService extends Service {
     }
 
     private void releasePlayer() {
-        if (mediaPlayer != null) {
-            try {
-                if (mediaPlayer.isPlaying()) mediaPlayer.stop();
-                mediaPlayer.release();
-            } catch (Exception ignored) {}
-            mediaPlayer = null;
-        }
+        if (mediaPlayer == null) return;
+        releasingPlayer = true;
+        isPrepared = false;
+        MediaPlayer old = mediaPlayer;
+        mediaPlayer = null;
+        try {
+            old.setOnErrorListener(null);
+            old.setOnCompletionListener(null);
+            old.setOnPreparedListener(null);
+            if (old.isPlaying()) old.stop();
+            old.reset();
+            old.release();
+        } catch (Exception ignored) {}
+        releasingPlayer = false;
     }
 
     private void acquireWakeLock() {

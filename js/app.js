@@ -22,6 +22,13 @@ import {
   favoriteHeartSvg,
   onFavoritesChange,
 } from "./favorites.js";
+import {
+  loadLibraryCache,
+  syncLibrary,
+  clearLibraryCache,
+  formatSyncedAt,
+} from "./library.js";
+import { clearPlaybackSession } from "./session.js";
 
 let api = null;
 let currentTab = "home";
@@ -62,16 +69,21 @@ const els = {
 };
 
 const player = new Player(els.audio);
-player.onError = (msg) => showToast(msg);
+player.onError = (msg) => {
+  if (player.isPlaying && msg === "Playback error") return;
+  showToast(msg);
+};
+player.onPlaybackOk = () => dismissToast();
 player.onLoading = (loading) => {
   document.getElementById("loading-overlay")?.classList.toggle("show", loading);
 };
 const playerUI = bindPlayerUI(player, () => api, { ...els, content: els.content });
 
 function songsWithUrls(songs) {
+  const transcode = !isNativeApp();
   return songs.map((s) => ({
     ...s,
-    streamUrl: api.streamUrl(s.id),
+    streamUrl: api.streamUrl(s.id, { transcode }),
     coverArtUrl: s.coverArt ? api.coverArtUrl(s.coverArt, 512) : "",
   }));
 }
@@ -82,12 +94,18 @@ function showBottomDock(show) {
   playerUI.updateDockHeight?.();
 }
 
+function dismissToast() {
+  clearTimeout(showToast._t);
+  document.getElementById("toast")?.classList.remove("show");
+}
+
 function showToast(msg) {
   let el = document.getElementById("toast");
   if (!el) {
     el = document.createElement("div");
     el.id = "toast";
     el.className = "toast";
+    el.addEventListener("click", dismissToast);
     document.body.appendChild(el);
   }
   el.textContent = msg;
@@ -356,12 +374,30 @@ async function renderArtists() {
   }
 }
 
+async function getAlbumsForDisplay() {
+  const cached = loadLibraryCache();
+  if (cached?.albums?.length) return cached.albums;
+  return api.getAlbumList("alphabeticalByName", 500);
+}
+
+function updateLibrarySettingsUI() {
+  const cache = loadLibraryCache();
+  document.getElementById("settings-album-count").textContent =
+    cache ? String(cache.albumCount) : "Not synced";
+  document.getElementById("settings-last-sync").textContent =
+    formatSyncedAt(cache?.syncedAt);
+}
+
 async function renderAlbums() {
   els.pageTitle.textContent = "Albums";
   showLoading();
   try {
-    const albums = await api.getAlbumList("alphabeticalByName", 50);
-    els.content.innerHTML = renderAlbumGrid(albums);
+    const albums = await getAlbumsForDisplay();
+    const cached = loadLibraryCache();
+    const hint = cached
+      ? ""
+      : '<p class="library-hint">Showing first 500 albums. Go to Settings → Sync Library for the full list.</p>';
+    els.content.innerHTML = `${hint}<div class="section-title">${albums.length} albums</div>${renderAlbumGrid(albums)}`;
     attachAlbumClicks(els.content);
     attachFavoriteHandlers(els.content, [], albums);
   } catch (e) {
@@ -524,6 +560,7 @@ function openSettings() {
   document.getElementById("setting-bitrate").value = String(prefs.bitrate || 320);
   document.getElementById("edit-connection-panel").hidden = true;
   document.getElementById("edit-connection-error").hidden = true;
+  updateLibrarySettingsUI();
 
   showScreen("screen-settings");
 }
@@ -553,6 +590,7 @@ els.loginForm.addEventListener("submit", async (e) => {
     setupMediaSession(player, () => api);
     showScreen("screen-main");
     showBottomDock(true);
+    await restorePlayback();
     switchTab("home");
   } catch (err) {
     els.loginError.textContent = err.message || "Could not connect. Check URL and credentials.";
@@ -573,6 +611,27 @@ onFavoritesChange(() => {
   updatePlayingFavorite(player.current);
   if (document.getElementById("screen-favorites")?.classList.contains("active")) {
     renderFavorites();
+  }
+});
+
+document.getElementById("btn-sync-library").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-sync-library");
+  if (!api) return;
+  btn.disabled = true;
+  const prev = btn.textContent;
+  btn.textContent = "Syncing…";
+  try {
+    const result = await syncLibrary(api, {
+      onProgress: (n) => { btn.textContent = `Syncing… ${n}`; },
+    });
+    updateLibrarySettingsUI();
+    showToast(`Synced ${result.albumCount} albums`);
+    if (currentTab === "albums") tabRenderers.albums();
+  } catch (e) {
+    showToast(e.message || "Sync failed");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prev;
   }
 });
 
@@ -618,6 +677,8 @@ document.getElementById("btn-save-connection").addEventListener("click", async (
 });
 document.getElementById("btn-disconnect").addEventListener("click", () => {
   clearConfig();
+  clearLibraryCache();
+  clearPlaybackSession();
   api = null;
   player.queue = [];
   player.index = -1;
@@ -632,6 +693,23 @@ function setupNativeUI() {
   const proxyRow = document.querySelector(".checkbox-row");
   if (proxyRow) proxyRow.hidden = true;
   document.getElementById("use-proxy").checked = false;
+}
+
+function enrichSong(song) {
+  return {
+    ...song,
+    streamUrl: api.streamUrl(song.id, { transcode: !isNativeApp() }),
+    coverArtUrl: song.coverArt ? api.coverArtUrl(song.coverArt, 512) : "",
+  };
+}
+
+async function restorePlayback() {
+  const restored = await player.restoreSession(enrichSong);
+  if (restored) {
+    playerUI.updateUI();
+    highlightPlaying();
+    updatePlayingFavorite(player.current);
+  }
 }
 
 async function init() {
@@ -649,6 +727,7 @@ async function init() {
       setupMediaSession(player, () => api);
       showScreen("screen-main");
       showBottomDock(true);
+      await restorePlayback();
       switchTab("home");
       return;
     } catch {
@@ -657,6 +736,12 @@ async function init() {
   }
   showScreen("screen-login");
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && api) {
+    player.syncFromNative?.();
+  }
+});
 
 if ("serviceWorker" in navigator && !isNativeApp()) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
