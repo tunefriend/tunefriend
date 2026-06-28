@@ -1,7 +1,27 @@
+/*
+ * TuneFriend
+ * Copyright (C) 2026 James
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
 import { SubsonicAPI, saveConfig, loadConfig, clearConfig, formatDuration, isNativeApp } from "./api.js";
 import { Player, bindPlayerUI } from "./player.js";
 import { setupMediaSession } from "./media-session.js";
 import { loadSettings, saveSettings } from "./settings.js";
+import {
+  isSongFavorite,
+  isAlbumFavorite,
+  toggleSongFavorite,
+  toggleAlbumFavorite,
+  getFavoriteSongs,
+  getFavoriteAlbums,
+  favoriteHeartSvg,
+  onFavoritesChange,
+} from "./favorites.js";
 
 let api = null;
 let currentTab = "home";
@@ -99,11 +119,14 @@ function coverImg(coverArt, size = 300) {
 function renderAlbumGrid(albums) {
   if (!albums.length) return '<div class="empty-state">No albums found</div>';
   return `<div class="album-grid">${albums.map((al) => `
-    <button class="album-card" data-album="${al.id}">
-      ${coverImg(al.coverArt)}
-      <div class="album-name">${escapeHtml(al.name)}</div>
-      <div class="album-artist">${escapeHtml(al.artist || "")}</div>
-    </button>
+    <div class="album-card-wrap">
+      <button class="album-card" data-album="${al.id}">
+        <div class="album-cover-wrap">${coverImg(al.coverArt)}</div>
+        <div class="album-name">${escapeHtml(al.name)}</div>
+        <div class="album-artist">${escapeHtml(al.artist || "")}</div>
+      </button>
+      <button class="fav-btn album-fav${isAlbumFavorite(al.id) ? " active" : ""}" data-fav-album="${al.id}" aria-label="Favorite album">${favoriteHeartSvg(isAlbumFavorite(al.id))}</button>
+    </div>
   `).join("")}</div>`;
 }
 
@@ -117,6 +140,7 @@ function renderSongList(songs, showAlbum = false) {
         <div class="song-title">${escapeHtml(s.title)}</div>
         <div class="song-sub">${escapeHtml(showAlbum ? s.album : s.artist)}</div>
       </div>
+      <button class="fav-btn song-fav${isSongFavorite(s.id) ? " active" : ""}" data-fav-song="${s.id}" aria-label="Favorite song">${favoriteHeartSvg(isSongFavorite(s.id))}</button>
       <span class="song-dur">${formatDuration(s.duration)}</span>
     </li>
   `).join("")}</ul>`;
@@ -125,6 +149,35 @@ function renderSongList(songs, showAlbum = false) {
 function attachAlbumClicks(container) {
   container.querySelectorAll("[data-album]").forEach((el) => {
     el.addEventListener("click", () => openAlbum(el.dataset.album));
+  });
+}
+
+function attachFavoriteHandlers(container, songs = [], albums = []) {
+  const songMap = new Map(songs.map((s) => [s.id, s]));
+  const albumMap = new Map(albums.map((a) => [a.id, a]));
+
+  container.querySelectorAll("[data-fav-song]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const song = songMap.get(btn.dataset.favSong);
+      if (!song) return;
+      const added = toggleSongFavorite(song);
+      btn.classList.toggle("active", added);
+      btn.innerHTML = favoriteHeartSvg(added);
+      showToast(added ? "Added to favorites" : "Removed from favorites");
+    });
+  });
+
+  container.querySelectorAll("[data-fav-album]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const album = albumMap.get(btn.dataset.favAlbum);
+      if (!album) return;
+      const added = toggleAlbumFavorite(album);
+      btn.classList.toggle("active", added);
+      btn.innerHTML = favoriteHeartSvg(added);
+      showToast(added ? "Album favorited" : "Album unfavorited");
+    });
   });
 }
 
@@ -176,6 +229,7 @@ async function openAlbum(id) {
           <h3>${escapeHtml(album.name)}</h3>
           <p>${escapeHtml(album.artist)}${album.year ? ` · ${album.year}` : ""}</p>
         </div>
+        <button class="fav-btn detail-fav${isAlbumFavorite(album.id) ? " active" : ""}" data-fav-album="${album.id}" aria-label="Favorite album">${favoriteHeartSvg(isAlbumFavorite(album.id))}</button>
       </div>
       <div class="album-actions">
         <button class="quick-btn primary" id="btn-play-all">
@@ -191,6 +245,7 @@ async function openAlbum(id) {
     `;
     attachSongClicks(els.content, album.songs);
     attachPlayButtons(els.content, album.songs);
+    attachFavoriteHandlers(els.content, album.songs, [album]);
   } catch (e) {
     showError(e.message);
   }
@@ -206,6 +261,7 @@ async function openArtist(id, name) {
       ${renderAlbumGrid(artist.albums)}
     `;
     attachAlbumClicks(els.content);
+    attachFavoriteHandlers(els.content, [], artist.albums);
   } catch (e) {
     showError(e.message);
   }
@@ -236,6 +292,7 @@ async function renderHome() {
       ${renderAlbumGrid(random)}
     `;
     attachAlbumClicks(els.content);
+    attachFavoriteHandlers(els.content, [], [...newest, ...random]);
     els.content.querySelector("#btn-shuffle-all")?.addEventListener("click", shuffleAll);
     els.content.querySelector("#btn-random")?.addEventListener("click", playRandom);
   } catch (e) {
@@ -275,6 +332,7 @@ async function renderAlbums() {
     const albums = await api.getAlbumList("alphabeticalByName", 50);
     els.content.innerHTML = renderAlbumGrid(albums);
     attachAlbumClicks(els.content);
+    attachFavoriteHandlers(els.content, [], albums);
   } catch (e) {
     showError(e.message);
   }
@@ -328,6 +386,7 @@ function renderSearch() {
         });
         attachAlbumClicks(results);
         attachSongClicks(results, data.songs);
+        attachFavoriteHandlers(results, data.songs, data.albums);
       } catch (e) {
         results.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`;
       }
@@ -368,6 +427,57 @@ function switchTab(tab) {
     n.classList.toggle("active", n.dataset.tab === tab);
   });
   tabRenderers[tab]?.();
+}
+
+function renderFavorites() {
+  const panel = document.getElementById("favorites-content");
+  const songs = getFavoriteSongs();
+  const albums = getFavoriteAlbums();
+
+  if (!songs.length && !albums.length) {
+    panel.innerHTML = '<div class="empty-state">No favorites yet — tap the heart on any song or album</div>';
+    return;
+  }
+
+  let html = "";
+  if (songs.length) {
+    html += `
+      <div class="favorites-section">
+        <div class="section-title">Songs</div>
+        <div class="album-actions">
+          <button class="quick-btn primary" id="btn-play-fav-songs">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            Play All
+          </button>
+          <button class="quick-btn secondary" id="btn-shuffle-fav-songs">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+            Shuffle
+          </button>
+        </div>
+        ${renderSongList(songs)}
+      </div>
+    `;
+  }
+  if (albums.length) {
+    html += `<div class="favorites-section"><div class="section-title">Albums</div>${renderAlbumGrid(albums)}</div>`;
+  }
+  panel.innerHTML = html;
+
+  attachSongClicks(panel, songs);
+  attachAlbumClicks(panel);
+  attachFavoriteHandlers(panel, songs, albums);
+
+  panel.querySelector("#btn-play-fav-songs")?.addEventListener("click", () => {
+    player.playAll(songsWithUrls(songs));
+  });
+  panel.querySelector("#btn-shuffle-fav-songs")?.addEventListener("click", () => {
+    player.playShuffled(songsWithUrls(songs));
+  });
+}
+
+function openFavorites() {
+  renderFavorites();
+  showScreen("screen-favorites");
 }
 
 function openSettings() {
@@ -422,9 +532,17 @@ els.loginForm.addEventListener("submit", async (e) => {
   }
 });
 
+document.getElementById("btn-favorites").addEventListener("click", openFavorites);
 document.getElementById("btn-settings").addEventListener("click", openSettings);
 
+document.getElementById("btn-back-favorites").addEventListener("click", () => showScreen("screen-main"));
 document.getElementById("btn-back-settings").addEventListener("click", () => showScreen("screen-main"));
+
+onFavoritesChange(() => {
+  if (document.getElementById("screen-favorites")?.classList.contains("active")) {
+    renderFavorites();
+  }
+});
 
 document.getElementById("btn-edit-connection").addEventListener("click", () => {
   const panel = document.getElementById("edit-connection-panel");

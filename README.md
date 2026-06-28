@@ -37,7 +37,7 @@ F-Droid is a free, open-source Android app store. Good fit for TuneFriend becaus
 
 ### Requirements
 
-- [x] Open source license (MIT — see `LICENSE`)
+- [x] Open source license (GPL v3 — see `LICENSE`)
 - [ ] Public git repository (GitHub or GitLab)
 - [ ] Tagged release (e.g. `v1.6`)
 - [ ] Merge request to [fdroiddata](https://gitlab.com/fdroid/fdroiddata)
@@ -71,4 +71,6 @@ Friends open F-Droid, search **TuneFriend**, install. Updates arrive automatical
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GNU General Public License v3.0 or later — see [LICENSE](LICENSE).
+
+If you modify TuneFriend and distribute it (including sharing a modified APK), you must provide the source code for your version under the same license.

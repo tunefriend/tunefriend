@@ -1,3 +1,13 @@
+/*
+ * TuneFriend
+ * Copyright (C) 2026 James
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
 const CACHE = "tunefriend-v6";
 const ASSETS = ["/", "/index.html", "/css/app.css", "/capacitor.js", "/js/app.js", "/js/api.js", "/js/player.js", "/js/settings.js", "/js/md5.js", "/js/native-http.js", "/js/native-player-bridge.js", "/js/media-session.js", "/manifest.json", "/icons/icon.svg"];
 
