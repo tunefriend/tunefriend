@@ -1,3 +1,13 @@
+/*
+ * TuneFriend
+ * Copyright (C) 2026 James
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
 :root {
   --bg: #0a0a0f;
   --bg-elevated: #14141f;
@@ -240,6 +250,23 @@ body {
   opacity: 0.8;
 }
 
+.top-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.top-bar-actions .settings-btn span {
+  display: none;
+}
+
+@media (min-width: 380px) {
+  .top-bar-actions .settings-btn span {
+    display: inline;
+  }
+}
+
 /* Content */
 .content {
   flex: 1;
@@ -354,6 +381,21 @@ body {
   gap: 1rem;
 }
 
+.album-card-wrap {
+  position: relative;
+}
+
+.album-cover-wrap {
+  position: relative;
+}
+
+.album-card-wrap > .album-fav {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+}
+
 .album-card {
   background: none;
   border: none;
@@ -450,6 +492,66 @@ body {
   font-size: 0.8rem;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.fav-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.15s, transform 0.15s;
+}
+
+.fav-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.fav-btn:active {
+  transform: scale(0.9);
+}
+
+.fav-btn.active {
+  color: var(--accent-2);
+}
+
+.album-fav {
+  background: rgba(10, 10, 15, 0.65);
+  backdrop-filter: blur(4px);
+  padding: 6px;
+}
+
+.album-fav svg {
+  width: 16px;
+  height: 16px;
+}
+
+.favorites-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  padding-bottom: calc(var(--dock-h) + var(--safe-bottom) + 1rem);
+  -webkit-overflow-scrolling: touch;
+}
+
+.favorites-section + .favorites-section {
+  margin-top: 1.5rem;
+}
+
+.detail-fav {
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.detail-fav svg {
+  width: 24px;
+  height: 24px;
 }
 
 /* Artist list */
@@ -852,6 +954,11 @@ body {
 .detail-header .meta h3 {
   font-size: 1.2rem;
   font-weight: 700;
+}
+
+.detail-header .meta {
+  flex: 1;
+  min-width: 0;
 }
 
 .detail-header .meta p {
