@@ -11,12 +11,24 @@
 export function setupMediaSession(player, getApi) {
   if (!("mediaSession" in navigator)) return;
 
-  navigator.mediaSession.setActionHandler("play", () => player.audio.play().catch(() => {}));
-  navigator.mediaSession.setActionHandler("pause", () => player.audio.pause());
+  navigator.mediaSession.setActionHandler("play", () => {
+    if (player.useNative?.()) player.toggle();
+    else player.audio.play().catch(() => {});
+  });
+  navigator.mediaSession.setActionHandler("pause", () => {
+    if (player.useNative?.()) player.toggle();
+    else player.audio.pause();
+  });
   navigator.mediaSession.setActionHandler("previoustrack", () => player.prev());
   navigator.mediaSession.setActionHandler("nexttrack", () => player.next());
   navigator.mediaSession.setActionHandler("seekto", (details) => {
-    if (details.seekTime != null && player.audio.duration) {
+    if (details.seekTime == null) return;
+    if (player.useNative?.()) {
+      const d = player.getDuration();
+      if (d) player.seek(details.seekTime / d);
+      return;
+    }
+    if (player.audio.duration) {
       player.audio.currentTime = details.seekTime;
     }
   });

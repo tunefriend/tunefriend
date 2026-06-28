@@ -11,7 +11,7 @@
 import { isNativeApp } from "./api.js";
 
 let plugin = null;
-let listeners = { ended: [], error: [], prepared: [] };
+let listeners = { ended: [], error: [], prepared: [], skipNext: [], skipPrevious: [] };
 let wired = false;
 
 function wirePlugin(p) {
@@ -20,6 +20,8 @@ function wirePlugin(p) {
   p.addListener("ended", () => listeners.ended.forEach((fn) => fn()));
   p.addListener("error", (e) => listeners.error.forEach((fn) => fn(e?.message || "Playback error")));
   p.addListener("prepared", () => listeners.prepared.forEach((fn) => fn()));
+  p.addListener("skipNext", () => listeners.skipNext.forEach((fn) => fn()));
+  p.addListener("skipPrevious", () => listeners.skipPrevious.forEach((fn) => fn()));
 }
 
 export function getNativePlugin() {
@@ -47,6 +49,8 @@ export function canUseNativePlayer() {
 export function onNativeEnded(fn) { listeners.ended.push(fn); }
 export function onNativeError(fn) { listeners.error.push(fn); }
 export function onNativePrepared(fn) { listeners.prepared.push(fn); }
+export function onNativeSkipNext(fn) { listeners.skipNext.push(fn); }
+export function onNativeSkipPrevious(fn) { listeners.skipPrevious.push(fn); }
 
 export async function nativePlay(song) {
   const p = getNativePlugin();
@@ -55,6 +59,7 @@ export async function nativePlay(song) {
     url: song.streamUrl,
     title: song.title || "",
     artist: song.artist || "",
+    artworkUrl: song.coverArtUrl || "",
   });
 }
 
