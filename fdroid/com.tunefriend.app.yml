@@ -20,7 +20,7 @@ Repo: https://github.com/tunefriend/tunefriend.git
 Builds:
   - versionName: '2.5'
     versionCode: 15
-    commit: 54a911eb983a5855d5f6541f6216af164463328b
+    commit: d0ee105a4235be09103a0e5b2220810fa30cdb21
     subdir: android/app
     sudo:
       - apt-get update
