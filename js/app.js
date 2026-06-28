@@ -69,7 +69,11 @@ player.onLoading = (loading) => {
 const playerUI = bindPlayerUI(player, () => api, { ...els, content: els.content });
 
 function songsWithUrls(songs) {
-  return songs.map((s) => ({ ...s, streamUrl: api.streamUrl(s.id) }));
+  return songs.map((s) => ({
+    ...s,
+    streamUrl: api.streamUrl(s.id),
+    coverArtUrl: s.coverArt ? api.coverArtUrl(s.coverArt, 512) : "",
+  }));
 }
 
 function showBottomDock(show) {

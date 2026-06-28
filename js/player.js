@@ -14,6 +14,7 @@ import {
   canUseNativePlayer, getNativePlugin, nativePlay, nativePause, nativeResume, nativeStop,
   nativeGetStatus, nativeSeekTo,
   onNativeEnded, onNativeError, onNativePrepared,
+  onNativeSkipNext, onNativeSkipPrevious,
 } from "./native-player-bridge.js";
 
 export class Player {
@@ -61,6 +62,8 @@ export class Player {
       this._nativePlaying = true;
       this.onStateChange?.();
     });
+    onNativeSkipNext(() => this.next());
+    onNativeSkipPrevious(() => this.prev());
   }
 
   get current() {

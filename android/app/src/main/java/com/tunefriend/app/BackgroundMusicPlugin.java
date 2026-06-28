@@ -41,6 +41,18 @@ public class BackgroundMusicPlugin extends Plugin {
                 notifyListeners("error", data);
             }
         });
+
+        MusicPlaybackService.setMediaControlCallback(new MusicPlaybackService.MediaControlCallback() {
+            @Override
+            public void onSkipToNext() {
+                notifyListeners("skipNext", new JSObject());
+            }
+
+            @Override
+            public void onSkipToPrevious() {
+                notifyListeners("skipPrevious", new JSObject());
+            }
+        });
     }
 
     @PluginMethod
@@ -56,6 +68,7 @@ public class BackgroundMusicPlugin extends Plugin {
         intent.putExtra("url", url);
         intent.putExtra("title", call.getString("title", ""));
         intent.putExtra("artist", call.getString("artist", ""));
+        intent.putExtra("artworkUrl", call.getString("artworkUrl", ""));
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getContext().startForegroundService(intent);
