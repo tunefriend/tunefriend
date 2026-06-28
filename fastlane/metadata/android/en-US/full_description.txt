@@ -1,0 +1,12 @@
+TuneFriend lets you stream music from a friend's self-hosted music server on your phone.
+
+Works with Navidrome, Airsonic, Gonic, Ampache, and other Subsonic-compatible servers.
+
+Features:
+• Browse artists, albums, and songs
+• Search your friend's library
+• Shuffle all or play random tracks
+• Background playback with lock-screen controls
+• Connect to any Subsonic-compatible server
+
+Your friend needs to give you their server URL, username, and password. TuneFriend connects directly — no account with us required.

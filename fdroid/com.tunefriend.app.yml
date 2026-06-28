@@ -1,0 +1,38 @@
+# Template for F-Droid fdroiddata merge request.
+# Copy this file to: fdroiddata/metadata/com.tunefriend.app.yml
+# Repo: https://gitlab.com/fdroid/fdroiddata
+
+Categories:
+  - Multimedia
+License: MIT
+AuthorName: James
+SourceCode: https://github.com/YOUR_USERNAME/tunefriend
+IssueTracker: https://github.com/YOUR_USERNAME/tunefriend/issues
+
+AutoName: TuneFriend
+Summary: Stream music from your friend's Subsonic server
+Description: |-
+  TuneFriend lets you stream music from a friend's self-hosted music server.
+
+  Works with Navidrome, Airsonic, Gonic, Ampache, and other Subsonic-compatible servers.
+
+  Features include browsing artists and albums, search, shuffle play, and background playback.
+
+RepoType: git
+Repo: https://github.com/YOUR_USERNAME/tunefriend.git
+
+Builds:
+  - versionName: '1.6'
+    versionCode: 6
+    commit: v1.6
+    subdir: android
+    gradle:
+      - yes
+    scandelete:
+      - node_modules/
+      - www/
+    prebuild:
+      - cd .. && npm ci && npm run sync:www && npx cap sync android
+
+CurrentVersion: '1.6'
+CurrentVersionCode: 6

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0a0a0f" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>TuneFriend</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+  <link rel="apple-touch-icon" href="/icons/icon.svg" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Login -->
+    <section id="screen-login" class="screen active">
+      <div class="login-hero">
+        <div class="logo-mark" aria-hidden="true">
+          <svg viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="30" stroke="currentColor" stroke-width="2"/><path d="M24 42V22l22-4v20" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="24" cy="42" r="5" fill="currentColor"/><circle cx="46" cy="38" r="5" fill="currentColor"/></svg>
+        </div>
+        <h1>TuneFriend</h1>
+        <p class="subtitle">Stream music from your friend's server</p>
+      </div>
+      <form id="login-form" class="login-form">
+        <label>
+          <span>Server URL</span>
+          <input type="url" id="server-url" placeholder="https://music.friend.com" required autocomplete="url" />
+        </label>
+        <label>
+          <span>Username</span>
+          <input type="text" id="username" placeholder="your-username" required autocomplete="username" />
+        </label>
+        <label>
+          <span>Password</span>
+          <input type="password" id="password" placeholder="••••••••" required autocomplete="current-password" />
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="use-proxy" checked />
+          <span>Use built-in proxy (recommended — avoids CORS issues)</span>
+        </label>
+        <p id="login-error" class="error" hidden></p>
+        <button type="submit" class="btn primary" id="login-btn">Connect</button>
+      </form>
+      <p class="hint">Works with Navidrome, Airsonic, Gonic, Ampache, and other Subsonic-compatible servers.</p>
+    </section>
+
+    <!-- Main app -->
+    <section id="screen-main" class="screen">
+      <header class="top-bar">
+        <h2 id="page-title">Home</h2>
+        <button class="settings-btn" id="btn-settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          <span>Settings</span>
+        </button>
+      </header>
+
+      <main id="content" class="content"></main>
+    </section>
+
+    <!-- Settings -->
+    <section id="screen-settings" class="screen">
+      <header class="top-bar">
+        <button class="icon-btn" id="btn-back-settings" aria-label="Back">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <h2>Settings</h2>
+        <div style="width:40px"></div>
+      </header>
+      <div class="settings-panel">
+        <div class="settings-group">
+          <h3>Server</h3>
+          <div class="settings-row">
+            <span class="settings-label">Address</span>
+            <span class="settings-value" id="settings-server">—</span>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Username</span>
+            <span class="settings-value" id="settings-user">—</span>
+          </div>
+          <button class="btn secondary settings-btn-block" id="btn-edit-connection">Edit Connection</button>
+        </div>
+
+        <div class="settings-group" id="edit-connection-panel" hidden>
+          <h3>Edit Connection</h3>
+          <label class="settings-field">
+            <span>Server URL</span>
+            <input type="url" id="edit-server-url" placeholder="http://192.168.1.208:4533" />
+          </label>
+          <label class="settings-field">
+            <span>Username</span>
+            <input type="text" id="edit-username" autocomplete="username" />
+          </label>
+          <label class="settings-field">
+            <span>Password</span>
+            <input type="password" id="edit-password" autocomplete="current-password" />
+          </label>
+          <p id="edit-connection-error" class="error" hidden></p>
+          <button class="btn primary settings-btn-block" id="btn-save-connection">Save & Reconnect</button>
+        </div>
+
+        <div class="settings-group">
+          <h3>Playback</h3>
+          <label class="settings-toggle">
+            <span>Shuffle by default</span>
+            <input type="checkbox" id="setting-shuffle-default" />
+          </label>
+          <label class="settings-field">
+            <span>Streaming quality</span>
+            <select id="setting-bitrate">
+              <option value="128">Low (128 kbps)</option>
+              <option value="192">Medium (192 kbps)</option>
+              <option value="320" selected>High (320 kbps)</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="settings-group">
+          <h3>About</h3>
+          <div class="settings-row">
+            <span class="settings-label">App</span>
+            <span class="settings-value">TuneFriend v1.7</span>
+          </div>
+        </div>
+
+        <button class="btn danger settings-btn-block" id="btn-disconnect">Disconnect</button>
+      </div>
+    </section>
+
+    <!-- Fixed bottom dock: now playing + navigation -->
+    <div id="bottom-dock" class="bottom-dock hidden">
+      <div id="now-playing" class="now-playing hidden">
+        <button class="np-main" id="np-expand">
+          <img id="np-art" class="np-art" alt="" />
+          <div class="np-info">
+            <span id="np-title" class="np-title">—</span>
+            <span id="np-artist" class="np-artist">—</span>
+          </div>
+        </button>
+        <button class="icon-btn" id="np-play" aria-label="Play/Pause">
+          <svg id="np-icon-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          <svg id="np-icon-pause" viewBox="0 0 24 24" fill="currentColor" hidden><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>
+        </button>
+      </div>
+      <nav class="bottom-nav">
+        <button class="nav-item active" data-tab="home">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+          <span>Home</span>
+        </button>
+        <button class="nav-item" data-tab="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <span>Search</span>
+        </button>
+        <button class="nav-item" data-tab="artists">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+          <span>Artists</span>
+        </button>
+        <button class="nav-item" data-tab="albums">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 14.5c-2.49 0-4.5-2.01-4.5-4.5S9.51 7.5 12 7.5s4.5 2.01 4.5 4.5-2.01 4.5-4.5 4.5z"/></svg>
+          <span>Albums</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- Full player -->
+    <section id="screen-player" class="screen player-screen">
+      <header class="top-bar">
+        <button class="icon-btn" id="btn-close-player" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+        <span class="player-label">Now Playing</span>
+        <div style="width:40px"></div>
+      </header>
+      <div class="player-body">
+        <img id="player-art" class="player-art" alt="" />
+        <h2 id="player-title">—</h2>
+        <p id="player-artist">—</p>
+        <p id="player-album" class="player-album">—</p>
+        <div class="progress-wrap">
+          <span id="time-current">0:00</span>
+          <input type="range" id="progress" min="0" max="100" value="0" />
+          <span id="time-total">0:00</span>
+        </div>
+        <div class="player-controls">
+          <button class="icon-btn lg" id="btn-shuffle" aria-label="Shuffle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+          </button>
+          <button class="icon-btn lg" id="btn-prev" aria-label="Previous">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+          </button>
+          <button class="icon-btn xl play-btn" id="btn-play" aria-label="Play/Pause">
+            <svg id="icon-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            <svg id="icon-pause" viewBox="0 0 24 24" fill="currentColor" hidden><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>
+          </button>
+          <button class="icon-btn lg" id="btn-next" aria-label="Next">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+          </button>
+          <button class="icon-btn lg" id="btn-repeat" aria-label="Repeat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="loading-overlay" class="loading-overlay"><div class="spinner"></div><span>Loading track…</span></div>
+  <audio id="audio" preload="metadata" playsinline></audio>
+  <script src="/capacitor.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

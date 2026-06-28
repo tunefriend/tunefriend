@@ -1,0 +1,517 @@
+import { SubsonicAPI, saveConfig, loadConfig, clearConfig, formatDuration, isNativeApp } from "./api.js";
+import { Player, bindPlayerUI } from "./player.js";
+import { setupMediaSession } from "./media-session.js";
+import { loadSettings, saveSettings } from "./settings.js";
+
+let api = null;
+let currentTab = "home";
+
+const els = {
+  audio: document.getElementById("audio"),
+  content: document.getElementById("content"),
+  pageTitle: document.getElementById("page-title"),
+  loginForm: document.getElementById("login-form"),
+  loginError: document.getElementById("login-error"),
+  loginBtn: document.getElementById("login-btn"),
+  nowPlaying: document.getElementById("now-playing"),
+  npArt: document.getElementById("np-art"),
+  npTitle: document.getElementById("np-title"),
+  npArtist: document.getElementById("np-artist"),
+  npPlay: document.getElementById("np-play"),
+  npIconPlay: document.getElementById("np-icon-play"),
+  npIconPause: document.getElementById("np-icon-pause"),
+  playerScreen: document.getElementById("screen-player"),
+  playerArt: document.getElementById("player-art"),
+  playerTitle: document.getElementById("player-title"),
+  playerArtist: document.getElementById("player-artist"),
+  playerAlbum: document.getElementById("player-album"),
+  progress: document.getElementById("progress"),
+  timeCurrent: document.getElementById("time-current"),
+  timeTotal: document.getElementById("time-total"),
+  btnPlay: document.getElementById("btn-play"),
+  iconPlay: document.getElementById("icon-play"),
+  iconPause: document.getElementById("icon-pause"),
+  btnPrev: document.getElementById("btn-prev"),
+  btnNext: document.getElementById("btn-next"),
+  btnShuffle: document.getElementById("btn-shuffle"),
+  btnRepeat: document.getElementById("btn-repeat"),
+  btnClosePlayer: document.getElementById("btn-close-player"),
+  npExpand: document.getElementById("np-expand"),
+};
+
+const player = new Player(els.audio);
+player.onError = (msg) => showToast(msg);
+player.onLoading = (loading) => {
+  document.getElementById("loading-overlay")?.classList.toggle("show", loading);
+};
+const playerUI = bindPlayerUI(player, () => api, { ...els, content: els.content });
+
+function songsWithUrls(songs) {
+  return songs.map((s) => ({ ...s, streamUrl: api.streamUrl(s.id) }));
+}
+
+function showBottomDock(show) {
+  const dock = document.getElementById("bottom-dock");
+  dock?.classList.toggle("hidden", !show);
+  playerUI.updateDockHeight?.();
+}
+
+function showToast(msg) {
+  let el = document.getElementById("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    el.className = "toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => el.classList.remove("show"), 3500);
+}
+
+function showScreen(id) {
+  document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+  document.getElementById(id)?.classList.add("active");
+}
+
+function showLoading() {
+  els.content.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+}
+
+function showError(msg) {
+  els.content.innerHTML = `<div class="empty-state">${escapeHtml(msg)}</div>`;
+}
+
+function escapeHtml(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function coverImg(coverArt, size = 300) {
+  if (!coverArt) {
+    return `<div class="album-cover placeholder"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div>`;
+  }
+  return `<img class="album-cover" src="${api.coverArtUrl(coverArt, size)}" alt="" loading="lazy" />`;
+}
+
+function renderAlbumGrid(albums) {
+  if (!albums.length) return '<div class="empty-state">No albums found</div>';
+  return `<div class="album-grid">${albums.map((al) => `
+    <button class="album-card" data-album="${al.id}">
+      ${coverImg(al.coverArt)}
+      <div class="album-name">${escapeHtml(al.name)}</div>
+      <div class="album-artist">${escapeHtml(al.artist || "")}</div>
+    </button>
+  `).join("")}</div>`;
+}
+
+function renderSongList(songs, showAlbum = false) {
+  if (!songs.length) return '<div class="empty-state">No songs found</div>';
+  const currentId = player.current?.id;
+  return `<ul class="song-list">${songs.map((s, i) => `
+    <li class="song-item${s.id === currentId ? " playing" : ""}" data-song-idx="${i}">
+      <span class="song-num">${s.track || i + 1}</span>
+      <div class="song-info">
+        <div class="song-title">${escapeHtml(s.title)}</div>
+        <div class="song-sub">${escapeHtml(showAlbum ? s.album : s.artist)}</div>
+      </div>
+      <span class="song-dur">${formatDuration(s.duration)}</span>
+    </li>
+  `).join("")}</ul>`;
+}
+
+function attachAlbumClicks(container) {
+  container.querySelectorAll("[data-album]").forEach((el) => {
+    el.addEventListener("click", () => openAlbum(el.dataset.album));
+  });
+}
+
+function attachSongClicks(container, songs) {
+  const withUrls = songsWithUrls(songs);
+  container.querySelectorAll("[data-song-idx]").forEach((el) => {
+    el.addEventListener("click", () => {
+      player.play(withUrls, parseInt(el.dataset.songIdx, 10));
+      highlightPlaying();
+    });
+  });
+}
+
+function attachPlayButtons(container, songs) {
+  container.querySelector("#btn-play-all")?.addEventListener("click", () => {
+    player.playAll(songsWithUrls(songs));
+  });
+  container.querySelector("#btn-shuffle-album")?.addEventListener("click", () => {
+    player.playShuffled(songsWithUrls(songs));
+  });
+}
+
+function highlightPlaying() {
+  els.content.querySelectorAll(".song-item").forEach((el) => {
+    const idx = parseInt(el.dataset.songIdx, 10);
+    const song = player.queue[idx];
+    el.classList.toggle("playing", song?.id === player.current?.id);
+  });
+}
+
+const _origTrackChange = player.onTrackChange;
+player.onTrackChange = (song) => {
+  _origTrackChange?.(song);
+  highlightPlaying();
+};
+
+async function openAlbum(id) {
+  showLoading();
+  els.pageTitle.textContent = "Album";
+  try {
+    const album = await api.getAlbum(id);
+    const art = album.coverArt
+      ? `<img src="${api.coverArtUrl(album.coverArt, 300)}" alt="" style="width:120px;height:120px;border-radius:14px;object-fit:cover;background:var(--bg-card)" />`
+      : `<div class="artist-avatar" style="width:120px;height:120px;border-radius:14px"><svg viewBox="0 0 24 24" fill="currentColor" width="48" height="48"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div>`;
+    els.content.innerHTML = `
+      <div class="detail-header">
+        ${art}
+        <div class="meta">
+          <h3>${escapeHtml(album.name)}</h3>
+          <p>${escapeHtml(album.artist)}${album.year ? ` · ${album.year}` : ""}</p>
+        </div>
+      </div>
+      <div class="album-actions">
+        <button class="quick-btn primary" id="btn-play-all">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          Play All
+        </button>
+        <button class="quick-btn secondary" id="btn-shuffle-album">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+          Shuffle
+        </button>
+      </div>
+      ${renderSongList(album.songs)}
+    `;
+    attachSongClicks(els.content, album.songs);
+    attachPlayButtons(els.content, album.songs);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function openArtist(id, name) {
+  showLoading();
+  els.pageTitle.textContent = name || "Artist";
+  try {
+    const artist = await api.getArtist(id);
+    els.content.innerHTML = `
+      <div class="section-title">${escapeHtml(artist.name)}</div>
+      ${renderAlbumGrid(artist.albums)}
+    `;
+    attachAlbumClicks(els.content);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function renderHome() {
+  els.pageTitle.textContent = "Home";
+  showLoading();
+  try {
+    const [newest, random] = await Promise.all([
+      api.getAlbumList("newest", 12),
+      api.getAlbumList("random", 12),
+    ]);
+    els.content.innerHTML = `
+      <div class="quick-actions">
+        <button class="quick-btn primary" id="btn-shuffle-all">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+          Shuffle All
+        </button>
+        <button class="quick-btn secondary" id="btn-random">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
+          Random
+        </button>
+      </div>
+      <div class="section-title">Recently Added</div>
+      ${renderAlbumGrid(newest)}
+      <div class="section-title">Discover</div>
+      ${renderAlbumGrid(random)}
+    `;
+    attachAlbumClicks(els.content);
+    els.content.querySelector("#btn-shuffle-all")?.addEventListener("click", shuffleAll);
+    els.content.querySelector("#btn-random")?.addEventListener("click", playRandom);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function renderArtists() {
+  els.pageTitle.textContent = "Artists";
+  showLoading();
+  try {
+    const artists = await api.getArtists();
+    if (!artists.length) {
+      els.content.innerHTML = '<div class="empty-state">No artists found</div>';
+      return;
+    }
+    els.content.innerHTML = `<ul class="artist-list">${artists.map((a) => `
+      <li class="artist-item" data-artist="${a.id}" data-name="${escapeHtml(a.name)}">
+        <div class="artist-avatar">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+        </div>
+        <span class="artist-name">${escapeHtml(a.name)}</span>
+      </li>
+    `).join("")}</ul>`;
+    els.content.querySelectorAll("[data-artist]").forEach((el) => {
+      el.addEventListener("click", () => openArtist(el.dataset.artist, el.dataset.name));
+    });
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function renderAlbums() {
+  els.pageTitle.textContent = "Albums";
+  showLoading();
+  try {
+    const albums = await api.getAlbumList("alphabeticalByName", 50);
+    els.content.innerHTML = renderAlbumGrid(albums);
+    attachAlbumClicks(els.content);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+function renderSearch() {
+  els.pageTitle.textContent = "Search";
+  els.content.innerHTML = `
+    <div class="search-box">
+      <input type="search" id="search-input" placeholder="Artists, albums, songs…" autocomplete="off" />
+    </div>
+    <div id="search-results"></div>
+  `;
+  const input = document.getElementById("search-input");
+  const results = document.getElementById("search-results");
+  let timer;
+
+  input.focus();
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 2) {
+      results.innerHTML = "";
+      return;
+    }
+    timer = setTimeout(async () => {
+      results.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+      try {
+        const data = await api.search(q);
+        let html = "";
+        if (data.artists.length) {
+          html += '<div class="section-title">Artists</div><ul class="artist-list">';
+          html += data.artists.map((a) => `
+            <li class="artist-item" data-artist="${a.id}" data-name="${escapeHtml(a.name)}">
+              <div class="artist-avatar"><svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></div>
+              <span class="artist-name">${escapeHtml(a.name)}</span>
+            </li>
+          `).join("");
+          html += "</ul>";
+        }
+        if (data.albums.length) {
+          html += '<div class="section-title">Albums</div>' + renderAlbumGrid(data.albums);
+        }
+        if (data.songs.length) {
+          html += '<div class="section-title">Songs</div>' + renderSongList(data.songs, true);
+        }
+        if (!html) html = '<div class="empty-state">No results</div>';
+        results.innerHTML = html;
+        results.querySelectorAll("[data-artist]").forEach((el) => {
+          el.addEventListener("click", () => openArtist(el.dataset.artist, el.dataset.name));
+        });
+        attachAlbumClicks(results);
+        attachSongClicks(results, data.songs);
+      } catch (e) {
+        results.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`;
+      }
+    }, 300);
+  });
+}
+
+const tabRenderers = {
+  home: renderHome,
+  search: renderSearch,
+  artists: renderArtists,
+  albums: renderAlbums,
+};
+
+async function shuffleAll() {
+  try {
+    const songs = await api.getRandomSongs(100);
+    if (!songs.length) return showToast("No songs found");
+    await player.playShuffled(songsWithUrls(songs));
+  } catch (e) {
+    showToast(e.message);
+  }
+}
+
+async function playRandom() {
+  try {
+    const songs = await api.getRandomSongs(1);
+    if (!songs.length) return showToast("No songs found");
+    await player.play(songsWithUrls(songs), 0);
+  } catch (e) {
+    showToast(e.message);
+  }
+}
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll(".nav-item").forEach((n) => {
+    n.classList.toggle("active", n.dataset.tab === tab);
+  });
+  tabRenderers[tab]?.();
+}
+
+function openSettings() {
+  const cfg = loadConfig();
+  const prefs = loadSettings();
+
+  document.getElementById("settings-server").textContent = cfg?.serverUrl || "—";
+  document.getElementById("settings-user").textContent = cfg?.username || "—";
+  document.getElementById("edit-server-url").value = cfg?.serverUrl || "";
+  document.getElementById("edit-username").value = cfg?.username || "";
+  document.getElementById("edit-password").value = cfg?.password || "";
+  document.getElementById("setting-shuffle-default").checked = !!prefs.shuffleDefault;
+  document.getElementById("setting-bitrate").value = String(prefs.bitrate || 320);
+  document.getElementById("edit-connection-panel").hidden = true;
+  document.getElementById("edit-connection-error").hidden = true;
+
+  showScreen("screen-settings");
+}
+
+document.querySelectorAll(".nav-item").forEach((btn) => {
+  btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+});
+
+els.loginForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  els.loginError.hidden = true;
+  els.loginBtn.disabled = true;
+  els.loginBtn.textContent = "Connecting…";
+
+  const config = {
+    serverUrl: document.getElementById("server-url").value,
+    username: document.getElementById("username").value,
+    password: document.getElementById("password").value,
+    useProxy: document.getElementById("use-proxy").checked,
+  };
+
+  try {
+    const testApi = new SubsonicAPI(config);
+    await testApi.ping();
+    api = testApi;
+    saveConfig(config);
+    setupMediaSession(player, () => api);
+    showScreen("screen-main");
+    showBottomDock(true);
+    switchTab("home");
+  } catch (err) {
+    els.loginError.textContent = err.message || "Could not connect. Check URL and credentials.";
+    els.loginError.hidden = false;
+  } finally {
+    els.loginBtn.disabled = false;
+    els.loginBtn.textContent = "Connect";
+  }
+});
+
+document.getElementById("btn-settings").addEventListener("click", openSettings);
+
+document.getElementById("btn-back-settings").addEventListener("click", () => showScreen("screen-main"));
+
+document.getElementById("btn-edit-connection").addEventListener("click", () => {
+  const panel = document.getElementById("edit-connection-panel");
+  panel.hidden = !panel.hidden;
+});
+
+document.getElementById("setting-shuffle-default").addEventListener("change", (e) => {
+  saveSettings({ shuffleDefault: e.target.checked });
+  player.shuffle = e.target.checked;
+});
+
+document.getElementById("setting-bitrate").addEventListener("change", (e) => {
+  saveSettings({ bitrate: parseInt(e.target.value, 10) });
+  showToast("Quality updated — applies to next song");
+});
+
+document.getElementById("btn-save-connection").addEventListener("click", async () => {
+  const errEl = document.getElementById("edit-connection-error");
+  errEl.hidden = true;
+
+  const config = {
+    serverUrl: document.getElementById("edit-server-url").value,
+    username: document.getElementById("edit-username").value,
+    password: document.getElementById("edit-password").value,
+    useProxy: !isNativeApp() && document.getElementById("use-proxy")?.checked,
+  };
+
+  try {
+    const testApi = new SubsonicAPI(config);
+    await testApi.ping();
+    api = testApi;
+    saveConfig(config);
+    document.getElementById("settings-server").textContent = config.serverUrl;
+    document.getElementById("settings-user").textContent = config.username;
+    document.getElementById("edit-connection-panel").hidden = true;
+    showToast("Connected successfully");
+  } catch (err) {
+    errEl.textContent = err.message || "Could not connect";
+    errEl.hidden = false;
+  }
+});
+document.getElementById("btn-disconnect").addEventListener("click", () => {
+  clearConfig();
+  api = null;
+  player.queue = [];
+  player.index = -1;
+  els.audio.src = "";
+  els.nowPlaying.classList.add("hidden");
+  showBottomDock(false);
+  showScreen("screen-login");
+});
+
+function setupNativeUI() {
+  if (!isNativeApp()) return;
+  const proxyRow = document.querySelector(".checkbox-row");
+  if (proxyRow) proxyRow.hidden = true;
+  document.getElementById("use-proxy").checked = false;
+}
+
+async function init() {
+  setupNativeUI();
+  player.shuffle = loadSettings().shuffleDefault;
+  const config = loadConfig();
+  if (config) {
+    document.getElementById("server-url").value = config.serverUrl || "";
+    document.getElementById("username").value = config.username || "";
+    document.getElementById("password").value = config.password || "";
+    document.getElementById("use-proxy").checked = config.useProxy !== false;
+    try {
+      api = new SubsonicAPI(config);
+      await api.ping();
+      setupMediaSession(player, () => api);
+      showScreen("screen-main");
+      showBottomDock(true);
+      switchTab("home");
+      return;
+    } catch {
+      clearConfig();
+    }
+  }
+  showScreen("screen-login");
+}
+
+if ("serviceWorker" in navigator && !isNativeApp()) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+} else if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.getRegistrations().then((regs) => regs.forEach((r) => r.unregister()));
+}
+
+init();
