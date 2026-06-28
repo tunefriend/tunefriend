@@ -57,6 +57,8 @@ const els = {
   btnRepeat: document.getElementById("btn-repeat"),
   btnClosePlayer: document.getElementById("btn-close-player"),
   npExpand: document.getElementById("np-expand"),
+  npFav: document.getElementById("np-fav"),
+  btnFav: document.getElementById("btn-fav"),
 };
 
 const player = new Player(els.audio);
@@ -208,10 +210,35 @@ function highlightPlaying() {
   });
 }
 
+function updatePlayingFavorite(song) {
+  const active = !!(song && isSongFavorite(song.id));
+  for (const btn of [els.npFav, els.btnFav]) {
+    if (!btn) continue;
+    btn.disabled = !song;
+    btn.classList.toggle("active", active);
+    btn.innerHTML = favoriteHeartSvg(active);
+  }
+}
+
+function togglePlayingFavorite() {
+  const song = player.current;
+  if (!song) return;
+  const added = toggleSongFavorite(song);
+  updatePlayingFavorite(song);
+  showToast(added ? "Added to favorites" : "Removed from favorites");
+}
+
+els.npFav?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  togglePlayingFavorite();
+});
+els.btnFav?.addEventListener("click", togglePlayingFavorite);
+
 const _origTrackChange = player.onTrackChange;
 player.onTrackChange = (song) => {
   _origTrackChange?.(song);
   highlightPlaying();
+  updatePlayingFavorite(song);
 };
 
 async function openAlbum(id) {
@@ -539,6 +566,7 @@ document.getElementById("btn-back-favorites").addEventListener("click", () => sh
 document.getElementById("btn-back-settings").addEventListener("click", () => showScreen("screen-main"));
 
 onFavoritesChange(() => {
+  updatePlayingFavorite(player.current);
   if (document.getElementById("screen-favorites")?.classList.contains("active")) {
     renderFavorites();
   }
