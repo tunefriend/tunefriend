@@ -670,6 +670,26 @@ body {
   text-overflow: ellipsis;
 }
 
+.now-playing .np-fav svg {
+  width: 20px;
+  height: 20px;
+}
+
+.now-playing .np-fav:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.player-fav svg {
+  width: 22px;
+  height: 22px;
+}
+
+.player-fav:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
 /* Full player */
 .player-screen {
   position: fixed;

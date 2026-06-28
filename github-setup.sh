@@ -3,6 +3,7 @@
 set -euo pipefail
 
 export PATH="/home/james/.local/git/usr/bin:${PATH:-}"
+export GIT_EXEC_PATH="/home/james/.local/git/usr/lib/git-core"
 cd "$(dirname "$0")"
 
 echo "==> TuneFriend GitHub setup"

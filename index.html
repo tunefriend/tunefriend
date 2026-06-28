@@ -140,7 +140,7 @@
           <h3>About</h3>
           <div class="settings-row">
             <span class="settings-label">App</span>
-            <span class="settings-value">TuneFriend v1.8</span>
+            <span class="settings-value">TuneFriend v1.9</span>
           </div>
         </div>
 
@@ -157,6 +157,9 @@
             <span id="np-title" class="np-title">—</span>
             <span id="np-artist" class="np-artist">—</span>
           </div>
+        </button>
+        <button class="fav-btn np-fav" id="np-fav" aria-label="Favorite song" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
         </button>
         <button class="icon-btn" id="np-play" aria-label="Play/Pause">
           <svg id="np-icon-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -190,7 +193,9 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
         <span class="player-label">Now Playing</span>
-        <div style="width:40px"></div>
+        <button class="fav-btn player-fav" id="btn-fav" aria-label="Favorite song" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+        </button>
       </header>
       <div class="player-body">
         <img id="player-art" class="player-art" alt="" />
