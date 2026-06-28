@@ -44,15 +44,18 @@ F-Droid is a free, open-source Android app store. Good fit for TuneFriend becaus
 
 ### Steps
 
-1. **Create a GitHub repo** and push this project:
+1. **Push to GitHub** (repo is already committed locally):
    ```bash
-   git init
-   git add .
-   git commit -m "TuneFriend 1.6"
-   git tag v1.6
+   /home/james/tunefriend/github-setup.sh
+   ```
+   Or manually: create a repo at [github.com/new](https://github.com/new), then:
+   ```bash
+   export PATH="/home/james/.local/git/usr/bin:$PATH"
+   cd /home/james/tunefriend
    git remote add origin https://github.com/YOUR_USERNAME/tunefriend.git
    git push -u origin main --tags
    ```
+   Use a [Personal Access Token](https://github.com/settings/tokens) as your password when prompted.
 
 2. **Fork** [fdroid/fdroiddata](https://gitlab.com/fdroid/fdroiddata) on GitLab.
 

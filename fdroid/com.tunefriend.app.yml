@@ -22,9 +22,9 @@ RepoType: git
 Repo: https://github.com/YOUR_USERNAME/tunefriend.git
 
 Builds:
-  - versionName: '1.6'
-    versionCode: 6
-    commit: v1.6
+  - versionName: '1.7'
+    versionCode: 7
+    commit: v1.7
     subdir: android
     gradle:
       - yes
@@ -34,5 +34,5 @@ Builds:
     prebuild:
       - cd .. && npm ci && npm run sync:www && npx cap sync android
 
-CurrentVersion: '1.6'
-CurrentVersionCode: 6
+CurrentVersion: '1.7'
+CurrentVersionCode: 7
