@@ -12,10 +12,11 @@ import { formatDuration, isNativeApp } from "./api.js";
 import { fetchStreamUrl, revokeBlobUrl } from "./native-http.js";
 import {
   canUseNativePlayer, getNativePlugin, nativePlay, nativePause, nativeResume, nativeStop,
-  nativeGetStatus, nativeSeekTo,
+  nativeGetStatus, nativeSeekTo, nativeSetNextTrack, nativeClearNextTrack,
   onNativeEnded, onNativeError, onNativePrepared,
-  onNativeSkipNext, onNativeSkipPrevious,
+  onNativeSkipNext, onNativeSkipPrevious, onNativeTrackAdvanced,
 } from "./native-player-bridge.js";
+import { savePlaybackSession, loadPlaybackSession, clearPlaybackSession } from "./session.js";
 
 export class Player {
   constructor(audioEl) {
@@ -33,12 +34,29 @@ export class Player {
     this._duration = 0;
     this._tickTimer = null;
     this._nativeListenersSet = false;
+    this._pendingNextIndex = -1;
+    this._saveTimer = null;
+    this._lastErrorAt = 0;
+    this._seekHoldUntil = 0;
+    this._startPaused = false;
+    this._restorePosition = 0;
     this.onError = null;
+    this.onPlaybackOk = null;
 
     audioEl.addEventListener("ended", () => { if (!this.useNative()) this.next(); });
-    audioEl.addEventListener("timeupdate", () => { if (!this.useNative()) this.onStateChange?.(); });
+    audioEl.addEventListener("timeupdate", () => {
+      if (!this.useNative()) {
+        this._scheduleSaveSession();
+        this.onStateChange?.();
+      }
+    });
     audioEl.addEventListener("play", () => { if (!this.useNative()) this.onStateChange?.(); });
-    audioEl.addEventListener("pause", () => { if (!this.useNative()) this.onStateChange?.(); });
+    audioEl.addEventListener("pause", () => {
+      if (!this.useNative()) {
+        this._saveSession();
+        this.onStateChange?.();
+      }
+    });
     audioEl.addEventListener("error", () => {
       if (this.useNative()) return;
       const code = audioEl.error?.code;
@@ -56,14 +74,207 @@ export class Player {
     if (this._nativeListenersSet) return;
     if (!getNativePlugin()) return;
     this._nativeListenersSet = true;
-    onNativeEnded(() => this.next());
-    onNativeError((msg) => this.onError?.(msg));
-    onNativePrepared(() => {
+    onNativeEnded(() => {
+      this._nativePlaying = false;
+      this._saveSession();
+      this.onStateChange?.();
+    });
+    onNativeTrackAdvanced((trackId) => this._onNativeTrackAdvanced(trackId));
+    onNativeError((msg) => {
+      const now = Date.now();
+      if (now - this._lastErrorAt < 1500) return;
+      this._lastErrorAt = now;
+      if (this._nativePlaying) return;
+      this.onError?.(msg);
+    });
+    onNativePrepared(async () => {
+      if (this._startPaused) {
+        const pos = this._restorePosition || 0;
+        if (pos > 0) {
+          await nativeSeekTo(pos);
+          this._nativePosition = pos;
+        }
+        await nativePause();
+        this._nativePlaying = false;
+        this._startPaused = false;
+        this._restorePosition = 0;
+        this.onPlaybackOk?.();
+        this.onStateChange?.();
+        return;
+      }
       this._nativePlaying = true;
+      this.onPlaybackOk?.();
       this.onStateChange?.();
     });
     onNativeSkipNext(() => this.next());
     onNativeSkipPrevious(() => this.prev());
+  }
+
+  _computeNextIndex() {
+    if (this.queue.length === 0) return -1;
+    if (this.shuffle) {
+      if (this.queue.length === 1) return -1;
+      let idx;
+      do {
+        idx = Math.floor(Math.random() * this.queue.length);
+      } while (idx === this.index);
+      return idx;
+    }
+    if (this.index < this.queue.length - 1) return this.index + 1;
+    if (this.repeat) return 0;
+    return -1;
+  }
+
+  _advanceIndex() {
+    if (this.queue.length === 0) return false;
+    if (this._pendingNextIndex >= 0) {
+      this.index = this._pendingNextIndex;
+      this._pendingNextIndex = -1;
+      return true;
+    }
+    const nextIdx = this._computeNextIndex();
+    if (nextIdx < 0) return false;
+    this.index = nextIdx;
+    return true;
+  }
+
+  async _prepareNativeNext() {
+    if (!this.useNative() || !this.current) return;
+    this._pendingNextIndex = this._computeNextIndex();
+    const nextSong = this._pendingNextIndex >= 0 ? this.queue[this._pendingNextIndex] : null;
+    try {
+      if (nextSong) await nativeSetNextTrack(nextSong);
+      else await nativeClearNextTrack();
+    } catch {
+      // Ignore — JS will retry on resume
+    }
+  }
+
+  _onNativeTrackAdvanced(trackId) {
+    if (trackId) {
+      const idx = this.queue.findIndex((s) => String(s.id) === String(trackId));
+      if (idx >= 0) this.index = idx;
+      else if (this._pendingNextIndex >= 0) this.index = this._pendingNextIndex;
+    } else if (this._pendingNextIndex >= 0) {
+      this.index = this._pendingNextIndex;
+    }
+    this._pendingNextIndex = -1;
+    this._duration = this.current?.duration || 0;
+    this._nativePosition = 0;
+    this._nativePlaying = true;
+    this.onPlaybackOk?.();
+    this.onTrackChange?.(this.current);
+    this._prepareNativeNext();
+    this._saveSession();
+    this.onStateChange?.();
+  }
+
+  async syncFromNative() {
+    if (!this.useNative()) return;
+    try {
+      const status = await nativeGetStatus();
+      if (status.trackId && this.queue.length) {
+        const idx = this.queue.findIndex((s) => String(s.id) === String(status.trackId));
+        if (idx >= 0 && idx !== this.index) {
+          this.index = idx;
+          this.onTrackChange?.(this.current);
+        }
+      }
+      this._nativePosition = status.position || 0;
+      if (status.duration > 0) this._duration = status.duration;
+      this._nativePlaying = !!status.playing;
+      await this._prepareNativeNext();
+      this._saveSession();
+      this.onStateChange?.();
+    } catch {
+      this.onStateChange?.();
+    }
+  }
+
+  _scheduleSaveSession() {
+    clearTimeout(this._saveTimer);
+    this._saveTimer = setTimeout(() => this._saveSession(), 2000);
+  }
+
+  _saveSession() {
+    if (!this.current || this.index < 0) return;
+    savePlaybackSession({
+      queue: this.queue,
+      index: this.index,
+      position: this.getCurrentTime(),
+      shuffle: this.shuffle,
+      repeat: this.repeat,
+      wasPlaying: this.isPlaying,
+    });
+  }
+
+  async restoreSession(enrichSong) {
+    const session = loadPlaybackSession();
+    if (!session?.queue?.length || session.index < 0) return false;
+
+    this.queue = session.queue.map(enrichSong);
+    this.shuffle = session.shuffle;
+    this.repeat = session.repeat;
+
+    try {
+      this.onLoading?.(true);
+      if (this.useNative()) {
+        this._ensureNativeListeners();
+        const status = await nativeGetStatus();
+        if (status.trackId || status.playing) {
+          const idx = status.trackId
+            ? this.queue.findIndex((s) => String(s.id) === String(status.trackId))
+            : -1;
+          this.index = idx >= 0 ? idx : Math.min(session.index, this.queue.length - 1);
+          this._duration = status.duration || this.current?.duration || 0;
+          this._nativePosition = status.position || session.position || 0;
+          if (status.playing) await nativePause();
+          this._nativePlaying = false;
+          await this._prepareNativeNext();
+          this._startNativeTick();
+          this.onTrackChange?.(this.current);
+          this._saveSession();
+          this.onStateChange?.();
+          return true;
+        }
+      }
+
+      this.index = Math.min(session.index, this.queue.length - 1);
+      this._duration = this.current?.duration || 0;
+      this._nativePosition = session.position || 0;
+      this.onTrackChange?.(this.current);
+
+      if (this.useNative()) {
+        this._pendingNextIndex = this._computeNextIndex();
+        const nextSong = this._pendingNextIndex >= 0 ? this.queue[this._pendingNextIndex] : null;
+        this._restorePosition = session.position || 0;
+        this._startPaused = true;
+        await nativePlay(this.current, nextSong);
+        this._startNativeTick();
+      } else {
+        revokeBlobUrl(this._blobUrl);
+        this._blobUrl = null;
+        this.audio.pause();
+        this.audio.removeAttribute("src");
+        if (isNativeApp()) {
+          this._blobUrl = await fetchStreamUrl(this.current.streamUrl);
+          this.audio.src = this._blobUrl;
+        } else {
+          this.audio.src = this.current.streamUrl;
+        }
+        this.audio.load();
+        if (session.position > 0) this.audio.currentTime = session.position;
+        this.audio.pause();
+      }
+      this._saveSession();
+      this.onStateChange?.();
+      return true;
+    } catch (e) {
+      clearPlaybackSession();
+      return false;
+    } finally {
+      this.onLoading?.(false);
+    }
   }
 
   get current() {
@@ -110,6 +321,7 @@ export class Player {
         nativeResume();
         this._nativePlaying = true;
       }
+      this._saveSession();
       this.onStateChange?.();
       return;
     }
@@ -118,16 +330,7 @@ export class Player {
   }
 
   next() {
-    if (this.queue.length === 0) return;
-    if (this.shuffle) {
-      this.index = Math.floor(Math.random() * this.queue.length);
-    } else if (this.index < this.queue.length - 1) {
-      this.index++;
-    } else if (this.repeat) {
-      this.index = 0;
-    } else {
-      return;
-    }
+    if (!this._advanceIndex()) return;
     this._loadCurrent().then(() => {
       if (!this.useNative()) this.audio.play().catch(() => {});
     });
@@ -153,10 +356,18 @@ export class Player {
   async seek(ratio) {
     const d = this.getDuration();
     if (!d) return;
-    const target = ratio * d;
+    const target = Math.max(0, Math.min(ratio * d, d - 0.5));
     if (this.useNative()) {
+      this._seekHoldUntil = Date.now() + 2000;
       this._nativePosition = target;
-      await nativeSeekTo(target);
+      try {
+        await nativeSeekTo(target);
+        const status = await nativeGetStatus();
+        if (status.position > 0) this._nativePosition = status.position;
+      } catch {
+        this.onError?.("Could not seek");
+      }
+      this._saveSession();
       this.onStateChange?.();
       return;
     }
@@ -190,12 +401,14 @@ export class Player {
 
       if (this.useNative()) {
         this._ensureNativeListeners();
-        // Stop HTML audio so it doesn't compete
         this.audio.pause();
         this.audio.removeAttribute("src");
-        await nativePlay(song);
+        this._pendingNextIndex = this._computeNextIndex();
+        const nextSong = this._pendingNextIndex >= 0 ? this.queue[this._pendingNextIndex] : null;
+        await nativePlay(song, nextSong);
         this.onTrackChange?.(song);
         this._startNativeTick();
+        this._saveSession();
         return;
       }
 
@@ -213,6 +426,7 @@ export class Player {
       }
       this.audio.load();
       this.onTrackChange?.(song);
+      this._saveSession();
     } catch (e) {
       this.onError?.(e.message || "Could not load stream");
     } finally {
@@ -225,9 +439,12 @@ export class Player {
     this._tickTimer = setInterval(async () => {
       try {
         const status = await nativeGetStatus();
-        this._nativePosition = status.position || 0;
+        if (Date.now() >= this._seekHoldUntil) {
+          this._nativePosition = status.position || 0;
+        }
         if (status.duration > 0) this._duration = status.duration;
         this._nativePlaying = status.playing;
+        this._scheduleSaveSession();
         this.onStateChange?.();
       } catch {
         this.onStateChange?.();
@@ -237,10 +454,12 @@ export class Player {
 
   async stop() {
     clearInterval(this._tickTimer);
+    clearTimeout(this._saveTimer);
     if (this.useNative()) await nativeStop();
     this._nativePlaying = false;
     revokeBlobUrl(this._blobUrl);
     this._blobUrl = null;
+    clearPlaybackSession();
   }
 }
 
@@ -301,32 +520,61 @@ export function bindPlayerUI(player, getApi, els) {
     btnRepeat.style.color = player.repeat ? "var(--accent)" : "";
   }
 
-  player.onTrackChange = updateUI;
-  player.onStateChange = updateUI;
+  let uiSeeking = false;
+
+  const _origTrackChange = player.onTrackChange;
+  player.onTrackChange = (song) => {
+    _origTrackChange?.(song);
+    if (!uiSeeking) updateUI();
+  };
+
+  player.onStateChange = () => {
+    if (!uiSeeking) updateUI();
+  };
 
   npPlay.addEventListener("click", () => player.toggle());
   btnPlay.addEventListener("click", () => player.toggle());
   btnPrev.addEventListener("click", () => player.prev());
   btnNext.addEventListener("click", () => player.next());
-  btnShuffle.addEventListener("click", () => { player.shuffle = !player.shuffle; updateUI(); });
-  btnRepeat.addEventListener("click", () => { player.repeat = !player.repeat; updateUI(); });
+  btnShuffle.addEventListener("click", () => {
+    player.shuffle = !player.shuffle;
+    player._prepareNativeNext?.();
+    player._saveSession?.();
+    updateUI();
+  });
+  btnRepeat.addEventListener("click", () => {
+    player.repeat = !player.repeat;
+    player._prepareNativeNext?.();
+    player._saveSession?.();
+    updateUI();
+  });
 
   npExpand.addEventListener("click", () => showScreen("screen-player"));
   btnClosePlayer.addEventListener("click", () => showScreen("screen-main"));
 
-  let seeking = false;
+  let seekCommitting = false;
+  async function commitSeek() {
+    if (!uiSeeking || seekCommitting) return;
+    seekCommitting = true;
+    uiSeeking = false;
+    await player.seek(progress.value / 100);
+    updateUI();
+    setTimeout(() => { seekCommitting = false; }, 150);
+  }
+
+  progress.addEventListener("pointerdown", () => { uiSeeking = true; });
+  progress.addEventListener("touchstart", () => { uiSeeking = true; }, { passive: true });
   progress.addEventListener("input", () => {
-    seeking = true;
+    uiSeeking = true;
     const d = player.getDuration();
     if (d) {
       const t = (progress.value / 100) * d;
       timeCurrent.textContent = formatDuration(t);
     }
   });
-  progress.addEventListener("change", () => {
-    player.seek(progress.value / 100);
-    seeking = false;
-  });
+  progress.addEventListener("change", commitSeek);
+  progress.addEventListener("pointerup", commitSeek);
+  progress.addEventListener("touchend", commitSeek);
 
   function showScreen(id) {
     document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));

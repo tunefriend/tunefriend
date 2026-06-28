@@ -755,7 +755,10 @@ body {
 .progress-wrap input[type="range"] {
   flex: 1;
   accent-color: var(--accent);
-  height: 4px;
+  height: 28px;
+  min-height: 44px;
+  touch-action: none;
+  cursor: pointer;
 }
 
 .player-controls {
@@ -814,6 +817,24 @@ body {
   font-size: 0.9rem;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.settings-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin-top: 0.5rem;
+}
+
+.library-hint {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  background: var(--bg-card);
+  border: 1px solid #2a2a3a;
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  line-height: 1.45;
 }
 
 .settings-field {
@@ -928,6 +949,8 @@ body {
 .toast.show {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 .loading-overlay {

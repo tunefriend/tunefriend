@@ -11,7 +11,14 @@
 import { isNativeApp } from "./api.js";
 
 let plugin = null;
-let listeners = { ended: [], error: [], prepared: [], skipNext: [], skipPrevious: [] };
+let listeners = {
+  ended: [],
+  error: [],
+  prepared: [],
+  skipNext: [],
+  skipPrevious: [],
+  trackAdvanced: [],
+};
 let wired = false;
 
 function wirePlugin(p) {
@@ -22,6 +29,7 @@ function wirePlugin(p) {
   p.addListener("prepared", () => listeners.prepared.forEach((fn) => fn()));
   p.addListener("skipNext", () => listeners.skipNext.forEach((fn) => fn()));
   p.addListener("skipPrevious", () => listeners.skipPrevious.forEach((fn) => fn()));
+  p.addListener("trackAdvanced", (e) => listeners.trackAdvanced.forEach((fn) => fn(e?.trackId || "")));
 }
 
 export function getNativePlugin() {
@@ -31,7 +39,6 @@ export function getNativePlugin() {
   const cap = window.Capacitor;
   if (!cap) return null;
 
-  // Required: register the local Android plugin on the JS side
   if (typeof cap.registerPlugin === "function") {
     plugin = cap.registerPlugin("BackgroundMusic");
   } else {
@@ -51,16 +58,48 @@ export function onNativeError(fn) { listeners.error.push(fn); }
 export function onNativePrepared(fn) { listeners.prepared.push(fn); }
 export function onNativeSkipNext(fn) { listeners.skipNext.push(fn); }
 export function onNativeSkipPrevious(fn) { listeners.skipPrevious.push(fn); }
+export function onNativeTrackAdvanced(fn) { listeners.trackAdvanced.push(fn); }
 
-export async function nativePlay(song) {
-  const p = getNativePlugin();
-  if (!p) throw new Error("Native player unavailable — reinstall latest APK");
-  await p.play({
+function trackPayload(song) {
+  return {
     url: song.streamUrl,
     title: song.title || "",
     artist: song.artist || "",
     artworkUrl: song.coverArtUrl || "",
+    trackId: String(song.id || ""),
+  };
+}
+
+export async function nativePlay(song, nextSong = null) {
+  const p = getNativePlugin();
+  if (!p) throw new Error("Native player unavailable — reinstall latest APK");
+  const payload = trackPayload(song);
+  if (nextSong) {
+    const next = trackPayload(nextSong);
+    payload.nextUrl = next.url;
+    payload.nextTitle = next.title;
+    payload.nextArtist = next.artist;
+    payload.nextArtworkUrl = next.artworkUrl;
+    payload.nextTrackId = next.trackId;
+  }
+  await p.play(payload);
+}
+
+export async function nativeSetNextTrack(song) {
+  const p = getNativePlugin();
+  if (!p?.setNextTrack || !song) return;
+  const next = trackPayload(song);
+  await p.setNextTrack({
+    nextUrl: next.url,
+    nextTitle: next.title,
+    nextArtist: next.artist,
+    nextArtworkUrl: next.artworkUrl,
+    nextTrackId: next.trackId,
   });
+}
+
+export async function nativeClearNextTrack() {
+  await getNativePlugin()?.clearNextTrack?.();
 }
 
 export async function nativePause() {
@@ -77,7 +116,7 @@ export async function nativeStop() {
 
 export async function nativeGetStatus() {
   const p = getNativePlugin();
-  if (!p?.getStatus) return { position: 0, duration: 0, playing: false };
+  if (!p?.getStatus) return { position: 0, duration: 0, playing: false, trackId: "" };
   return p.getStatus();
 }
 

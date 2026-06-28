@@ -7,6 +7,8 @@ Features:
 • Search your friend's library
 • Shuffle all or play random tracks
 • Background playback with lock-screen controls
+• Resume your last song where you left off
+• Favorites and full library sync
 • Connect to any Subsonic-compatible server
 
 Your friend needs to give you their server URL, username, and password. TuneFriend connects directly — no account with us required.

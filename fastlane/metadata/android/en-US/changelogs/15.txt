@@ -1,0 +1,4 @@
+Background track advance with screen off
+Restore last song on reopen (starts paused)
+Seek/scrub support in full player
+Playback error fixes
