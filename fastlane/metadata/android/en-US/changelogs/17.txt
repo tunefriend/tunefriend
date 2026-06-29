@@ -1,0 +1,3 @@
+Settings moved to bottom navigation bar
+Removed Artists tab (use Search on Home to find artists)
+Removed top Settings button

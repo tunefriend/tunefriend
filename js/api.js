@@ -15,6 +15,12 @@ const API_VERSION = "1.16.1";
 const CLIENT = "TuneFriend";
 const CLIENT_VERSION = "1.0";
 
+/** Subsonic JSON often returns a single object instead of a one-element array. */
+export function asArray(value) {
+  if (value == null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
 function normalizeServerUrl(url) {
   let u = url.trim().replace(/\/+$/, "");
   if (!/^https?:\/\//i.test(u)) u = "https://" + u;
@@ -94,11 +100,10 @@ export class SubsonicAPI {
 
   async getArtists() {
     const r = await this._fetch("getArtists.view");
-    const indexes = r.indexes?.index || [];
     const artists = [];
-    for (const idx of indexes) {
-      for (const a of idx.artist || []) {
-        artists.push({ id: a.id, name: a.name, albumCount: a.albumCount });
+    for (const idx of asArray(r.indexes?.index)) {
+      for (const a of asArray(idx.artist)) {
+        if (a?.id) artists.push({ id: a.id, name: a.name, albumCount: a.albumCount });
       }
     }
     artists.sort((a, b) => a.name.localeCompare(b.name));
@@ -111,7 +116,7 @@ export class SubsonicAPI {
     return {
       id: artist.id,
       name: artist.name,
-      albums: (artist.album || []).map((al) => ({
+      albums: asArray(artist.album).map((al) => ({
         id: al.id,
         name: al.name,
         artist: al.artist,
@@ -125,7 +130,7 @@ export class SubsonicAPI {
 
   async getAlbumList(type = "newest", size = 30, offset = 0) {
     const r = await this._fetch("getAlbumList2.view", { type, size, offset });
-    return (r.albumList2?.album || []).map((al) => ({
+    return asArray(r.albumList2?.album).map((al) => ({
       id: al.id,
       name: al.name,
       artist: al.artist,
@@ -146,29 +151,68 @@ export class SubsonicAPI {
       artistId: album.artistId,
       coverArt: album.coverArt,
       year: album.year,
-      songs: (album.song || []).map(mapSong),
+      songs: asArray(album.song).map(mapSong),
     };
   }
 
   async getRandomSongs(size = 50) {
     const r = await this._fetch("getRandomSongs.view", { size });
-    return (r.randomSongs?.song || []).map(mapSong);
+    return asArray(r.randomSongs?.song).map(mapSong);
   }
 
   async search(query) {
     const r = await this._fetch("search3.view", { query, songCount: 20, albumCount: 20, artistCount: 20 });
     const res = r.searchResult3 || r.searchResult || {};
     return {
-      artists: (res.artist || []).map((a) => ({ id: a.id, name: a.name, albumCount: a.albumCount })),
-      albums: (res.album || []).map((al) => ({
+      artists: asArray(res.artist).map((a) => ({ id: a.id, name: a.name, albumCount: a.albumCount })),
+      albums: asArray(res.album).map((al) => ({
         id: al.id,
         name: al.name,
         artist: al.artist,
         artistId: al.artistId,
         coverArt: al.coverArt,
       })),
-      songs: (res.song || []).map(mapSong),
+      songs: asArray(res.song).map(mapSong),
     };
+  }
+
+  /** Load all songs — tries search first, then walks synced albums. */
+  async getAllSongs({ albums = null, onProgress } = {}) {
+    for (const q of ["*", "+"]) {
+      try {
+        const r = await this._fetch("search3.view", {
+          query: q,
+          songCount: 5000,
+          albumCount: 0,
+          artistCount: 0,
+        });
+        const res = r.searchResult3 || r.searchResult || {};
+        const songs = asArray(res.song).map(mapSong);
+        if (songs.length) {
+          songs.sort((a, b) => a.title.localeCompare(b.title));
+          return songs;
+        }
+      } catch {
+        /* try next query or album walk */
+      }
+    }
+
+    let albumList = albums;
+    if (!albumList?.length) {
+      albumList = await this.getAlbumList("alphabeticalByName", 500);
+    }
+    if (!albumList.length) return [];
+
+    const songs = [];
+    const batchSize = 8;
+    for (let i = 0; i < albumList.length; i += batchSize) {
+      const batch = albumList.slice(i, i + batchSize);
+      const results = await Promise.all(batch.map((al) => this.getAlbum(al.id)));
+      for (const album of results) songs.push(...album.songs);
+      onProgress?.(Math.min(i + batchSize, albumList.length), albumList.length);
+    }
+    songs.sort((a, b) => a.title.localeCompare(b.title));
+    return songs;
   }
 
   coverArtUrl(id, size = 300) {

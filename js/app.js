@@ -330,9 +330,9 @@ async function renderHome() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
           Shuffle All
         </button>
-        <button class="quick-btn secondary" id="btn-random">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
-          Random
+        <button class="quick-btn secondary" id="btn-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          Search
         </button>
       </div>
       <div class="section-title">Recently Added</div>
@@ -343,32 +343,7 @@ async function renderHome() {
     attachAlbumClicks(els.content);
     attachFavoriteHandlers(els.content, [], [...newest, ...random]);
     els.content.querySelector("#btn-shuffle-all")?.addEventListener("click", shuffleAll);
-    els.content.querySelector("#btn-random")?.addEventListener("click", playRandom);
-  } catch (e) {
-    showError(e.message);
-  }
-}
-
-async function renderArtists() {
-  els.pageTitle.textContent = "Artists";
-  showLoading();
-  try {
-    const artists = await api.getArtists();
-    if (!artists.length) {
-      els.content.innerHTML = '<div class="empty-state">No artists found</div>';
-      return;
-    }
-    els.content.innerHTML = `<ul class="artist-list">${artists.map((a) => `
-      <li class="artist-item" data-artist="${a.id}" data-name="${escapeHtml(a.name)}">
-        <div class="artist-avatar">
-          <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
-        </div>
-        <span class="artist-name">${escapeHtml(a.name)}</span>
-      </li>
-    `).join("")}</ul>`;
-    els.content.querySelectorAll("[data-artist]").forEach((el) => {
-      el.addEventListener("click", () => openArtist(el.dataset.artist, el.dataset.name));
-    });
+    els.content.querySelector("#btn-search")?.addEventListener("click", openSearch);
   } catch (e) {
     showError(e.message);
   }
@@ -405,6 +380,69 @@ async function renderAlbums() {
   }
 }
 
+function attachArtistClicks(container) {
+  container.querySelectorAll("[data-artist]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const id = el.dataset.artist;
+      const name = el.querySelector(".artist-name")?.textContent?.trim() || "Artist";
+      openArtist(id, name);
+    });
+  });
+}
+
+function openSearch() {
+  currentTab = "search";
+  document.querySelectorAll(".nav-item").forEach((n) => {
+    n.classList.toggle("active", n.dataset.tab === "home");
+  });
+  renderSearch();
+}
+
+async function renderSongs() {
+  els.pageTitle.textContent = "Songs";
+  showLoading();
+  try {
+    const cache = loadLibraryCache();
+    const songs = await api.getAllSongs({
+      albums: cache?.albums,
+      onProgress: (done, total) => {
+        els.content.innerHTML = `<div class="loading"><div class="spinner"></div><span>Loading songs… ${done}/${total}</span></div>`;
+      },
+    });
+    if (!songs.length) {
+      els.content.innerHTML = '<div class="empty-state">No songs found. Try Settings → Sync Library first.</div>';
+      return;
+    }
+    const hint = cache
+      ? ""
+      : '<p class="library-hint">Sync Library in Settings for the complete song list.</p>';
+    els.content.innerHTML = `${hint}
+      <div class="album-actions">
+        <button class="quick-btn primary" id="btn-play-all-songs">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          Play All
+        </button>
+        <button class="quick-btn secondary" id="btn-shuffle-all-songs">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+          Shuffle
+        </button>
+      </div>
+      <div class="section-title">${songs.length} songs</div>
+      ${renderSongList(songs, true)}
+    `;
+    attachSongClicks(els.content, songs);
+    attachFavoriteHandlers(els.content, songs, []);
+    els.content.querySelector("#btn-play-all-songs")?.addEventListener("click", () => {
+      player.playAll(songsWithUrls(songs));
+    });
+    els.content.querySelector("#btn-shuffle-all-songs")?.addEventListener("click", () => {
+      player.playShuffled(songsWithUrls(songs));
+    });
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
 function renderSearch() {
   els.pageTitle.textContent = "Search";
   els.content.innerHTML = `
@@ -433,7 +471,7 @@ function renderSearch() {
         if (data.artists.length) {
           html += '<div class="section-title">Artists</div><ul class="artist-list">';
           html += data.artists.map((a) => `
-            <li class="artist-item" data-artist="${a.id}" data-name="${escapeHtml(a.name)}">
+            <li class="artist-item" data-artist="${a.id}">
               <div class="artist-avatar"><svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></div>
               <span class="artist-name">${escapeHtml(a.name)}</span>
             </li>
@@ -448,9 +486,7 @@ function renderSearch() {
         }
         if (!html) html = '<div class="empty-state">No results</div>';
         results.innerHTML = html;
-        results.querySelectorAll("[data-artist]").forEach((el) => {
-          el.addEventListener("click", () => openArtist(el.dataset.artist, el.dataset.name));
-        });
+        attachArtistClicks(results);
         attachAlbumClicks(results);
         attachSongClicks(results, data.songs);
         attachFavoriteHandlers(results, data.songs, data.albums);
@@ -463,8 +499,7 @@ function renderSearch() {
 
 const tabRenderers = {
   home: renderHome,
-  search: renderSearch,
-  artists: renderArtists,
+  songs: renderSongs,
   albums: renderAlbums,
 };
 
@@ -478,21 +513,16 @@ async function shuffleAll() {
   }
 }
 
-async function playRandom() {
-  try {
-    const songs = await api.getRandomSongs(1);
-    if (!songs.length) return showToast("No songs found");
-    await player.play(songsWithUrls(songs), 0);
-  } catch (e) {
-    showToast(e.message);
-  }
-}
-
 function switchTab(tab) {
   currentTab = tab;
   document.querySelectorAll(".nav-item").forEach((n) => {
     n.classList.toggle("active", n.dataset.tab === tab);
   });
+  if (tab === "settings") {
+    openSettings();
+    return;
+  }
+  showScreen("screen-main");
   tabRenderers[tab]?.();
 }
 
@@ -602,10 +632,8 @@ els.loginForm.addEventListener("submit", async (e) => {
 });
 
 document.getElementById("btn-favorites").addEventListener("click", openFavorites);
-document.getElementById("btn-settings").addEventListener("click", openSettings);
 
 document.getElementById("btn-back-favorites").addEventListener("click", () => showScreen("screen-main"));
-document.getElementById("btn-back-settings").addEventListener("click", () => showScreen("screen-main"));
 
 onFavoritesChange(() => {
   updatePlayingFavorite(player.current);
@@ -627,6 +655,7 @@ document.getElementById("btn-sync-library").addEventListener("click", async () =
     updateLibrarySettingsUI();
     showToast(`Synced ${result.albumCount} albums`);
     if (currentTab === "albums") tabRenderers.albums();
+    if (currentTab === "songs") tabRenderers.songs();
   } catch (e) {
     showToast(e.message || "Sync failed");
   } finally {
