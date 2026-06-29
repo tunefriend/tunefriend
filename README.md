@@ -31,43 +31,6 @@ npm run build:apk
 
 APK output: `android/app/build/outputs/apk/debug/app-debug.apk`
 
-## Submit to F-Droid
-
-F-Droid is a free, open-source Android app store. Good fit for TuneFriend because it's libre software with no tracking.
-
-### Requirements
-
-- [x] Open source license (GPL v3 — see `LICENSE`)
-- [ ] Public git repository (GitHub or GitLab)
-- [ ] Tagged release (e.g. `v1.6`)
-- [ ] Merge request to [fdroiddata](https://gitlab.com/fdroid/fdroiddata)
-
-### Steps
-
-1. **Push to GitHub** (repo is already committed locally):
-   ```bash
-   /home/james/tunefriend/github-setup.sh
-   ```
-   Or manually: create a repo at [github.com/new](https://github.com/new), then:
-   ```bash
-   export PATH="/home/james/.local/git/usr/bin:$PATH"
-   cd /home/james/tunefriend
-   git remote add origin https://github.com/YOUR_USERNAME/tunefriend.git
-   git push -u origin main --tags
-   ```
-   Use a [Personal Access Token](https://github.com/settings/tokens) as your password when prompted.
-
-2. **Fork** [fdroid/fdroiddata](https://gitlab.com/fdroid/fdroiddata) on GitLab.
-
-3. **Add metadata** — copy `fdroid/com.tunefriend.app.yml` to `metadata/com.tunefriend.app.yml` in your fork. Update `YOUR_USERNAME` and the `SourceCode` URLs.
-
-4. **Open a merge request** on GitLab. F-Droid volunteers review and build the app themselves.
-
-5. **Wait** — review often takes 1–4 weeks for new apps.
-
-### After acceptance
-
-Friends open F-Droid, search **TuneFriend**, install. Updates arrive automatically.
 
 ## License
 
