@@ -35,6 +35,10 @@ import androidx.core.app.NotificationCompat;
 import androidx.media.app.NotificationCompat.MediaStyle;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.Random;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 public class MusicPlaybackService extends Service {
     public static final String CHANNEL_ID = "tunefriend_music";
@@ -73,6 +77,21 @@ public class MusicPlaybackService extends Service {
     private String nextTrackId = "";
     private boolean isPrepared = false;
     private boolean releasingPlayer = false;
+    private boolean shouldResumeAfterFocus = false;
+
+    private static class TrackInfo {
+        String url;
+        String title;
+        String artist;
+        String artworkUrl;
+        String trackId;
+    }
+
+    private final ArrayList<TrackInfo> playQueue = new ArrayList<>();
+    private int queueIndex = -1;
+    private boolean queueShuffle = false;
+    private boolean queueRepeat = false;
+    private final Random random = new Random();
 
     public interface PlaybackCallback {
         void onPrepared();
@@ -92,6 +111,18 @@ public class MusicPlaybackService extends Service {
 
     public static void setMediaControlCallback(MediaControlCallback cb) {
         mediaControlCallback = cb;
+    }
+
+    private static String pendingQueueJson = null;
+    private static int pendingQueueIndex = 0;
+    private static boolean pendingQueueShuffle = false;
+    private static boolean pendingQueueRepeat = false;
+
+    public static synchronized void setQueueState(String json, int index, boolean shuffle, boolean repeat) {
+        pendingQueueJson = json;
+        pendingQueueIndex = index;
+        pendingQueueShuffle = shuffle;
+        pendingQueueRepeat = repeat;
     }
 
     public static int getPositionMs() {
@@ -199,6 +230,7 @@ public class MusicPlaybackService extends Service {
 
         switch (intent.getAction()) {
             case ACTION_PLAY:
+                applyQueueFromIntent(intent);
                 play(
                     intent.getStringExtra("url"),
                     intent.getStringExtra("title"),
@@ -213,6 +245,7 @@ public class MusicPlaybackService extends Service {
                 );
                 break;
             case ACTION_SET_NEXT:
+                applyQueueFromIntent(intent);
                 setNextTrackInfo(
                     intent.getStringExtra("nextUrl"),
                     intent.getStringExtra("nextTitle"),
@@ -254,19 +287,110 @@ public class MusicPlaybackService extends Service {
         nextTrackId = trackId != null ? trackId : "";
     }
 
+    private void applyQueueFromIntent(Intent intent) {
+        String queueJson = pendingQueueJson;
+        if (queueJson == null || queueJson.isEmpty()) {
+            if (intent == null) return;
+            queueJson = intent.getStringExtra("queueJson");
+        }
+        if (queueJson == null || queueJson.isEmpty()) return;
+        try {
+            JSONArray arr = new JSONArray(queueJson);
+            playQueue.clear();
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject obj = arr.getJSONObject(i);
+                TrackInfo track = new TrackInfo();
+                track.url = obj.optString("url", "");
+                track.title = obj.optString("title", "");
+                track.artist = obj.optString("artist", "");
+                track.artworkUrl = obj.optString("artworkUrl", "");
+                track.trackId = obj.optString("trackId", "");
+                if (!track.url.isEmpty()) playQueue.add(track);
+            }
+            if (pendingQueueJson != null) {
+                queueIndex = Math.max(0, Math.min(pendingQueueIndex, playQueue.size() - 1));
+                queueShuffle = pendingQueueShuffle;
+                queueRepeat = pendingQueueRepeat;
+            } else if (intent != null) {
+                if (intent.hasExtra("queueIndex")) {
+                    int idx = intent.getIntExtra("queueIndex", 0);
+                    if (idx >= 0 && idx < playQueue.size()) queueIndex = idx;
+                }
+                if (intent.hasExtra("shuffle")) {
+                    queueShuffle = intent.getBooleanExtra("shuffle", false);
+                }
+                if (intent.hasExtra("repeat")) {
+                    queueRepeat = intent.getBooleanExtra("repeat", false);
+                }
+            }
+            String trackId = intent != null ? intent.getStringExtra("trackId") : currentTrackId;
+            syncQueueIndexToCurrentTrack(trackId);
+            refreshLegacyNextFromQueue();
+        } catch (Exception ignored) {}
+    }
+
+    private void syncQueueIndexToCurrentTrack(String trackId) {
+        if (trackId == null || trackId.isEmpty() || playQueue.isEmpty()) return;
+        for (int i = 0; i < playQueue.size(); i++) {
+            if (trackId.equals(playQueue.get(i).trackId)) {
+                queueIndex = i;
+                return;
+            }
+        }
+    }
+
+    private int computeNextQueueIndex() {
+        if (playQueue.isEmpty()) return -1;
+        if (queueShuffle) {
+            if (playQueue.size() == 1) return queueRepeat ? 0 : -1;
+            int idx;
+            int guard = 0;
+            do {
+                idx = random.nextInt(playQueue.size());
+                guard++;
+            } while (idx == queueIndex && playQueue.size() > 1 && guard < 12);
+            return idx;
+        }
+        if (queueIndex < playQueue.size() - 1) return queueIndex + 1;
+        if (queueRepeat) return 0;
+        return -1;
+    }
+
+    private void refreshLegacyNextFromQueue() {
+        int nextIdx = computeNextQueueIndex();
+        if (nextIdx < 0) {
+            setNextTrackInfo(null, "", "", "", "");
+            return;
+        }
+        TrackInfo next = playQueue.get(nextIdx);
+        setNextTrackInfo(next.url, next.title, next.artist, next.artworkUrl, next.trackId);
+    }
+
     private boolean advanceToNextTrack() {
-        if (nextUrl == null || nextUrl.isEmpty()) return false;
+        int nextIdx = computeNextQueueIndex();
+        if (nextIdx >= 0 && !playQueue.isEmpty()) {
+            TrackInfo track = playQueue.get(nextIdx);
+            queueIndex = nextIdx;
+            setNextTrackInfo(null, "", "", "", "");
+            play(track.url, track.title, track.artist, track.artworkUrl, track.trackId,
+                null, "", "", "", "");
+            refreshLegacyNextFromQueue();
+            if (callback != null) callback.onTrackAdvanced(track.trackId);
+            return true;
+        }
 
-        String url = nextUrl;
-        String title = nextTitle;
-        String artist = nextArtist;
-        String artworkUrl = nextArtworkUrl;
-        String trackId = nextTrackId;
-
-        setNextTrackInfo(null, "", "", "", "");
-        play(url, title, artist, artworkUrl, trackId, null, "", "", "", "");
-        if (callback != null) callback.onTrackAdvanced(trackId);
-        return true;
+        if (nextUrl != null && !nextUrl.isEmpty()) {
+            String url = nextUrl;
+            String title = nextTitle;
+            String artist = nextArtist;
+            String artworkUrl = nextArtworkUrl;
+            String trackId = nextTrackId;
+            setNextTrackInfo(null, "", "", "", "");
+            play(url, title, artist, artworkUrl, trackId, null, "", "", "", "");
+            if (callback != null) callback.onTrackAdvanced(trackId);
+            return true;
+        }
+        return false;
     }
 
     private void play(String url, String title, String artist, String artworkUrl, String trackId,
@@ -279,7 +403,12 @@ public class MusicPlaybackService extends Service {
         currentAlbumArt = null;
         isPaused = false;
         isPrepared = false;
-        setNextTrackInfo(nextUrl, nextTitle, nextArtist, nextArtworkUrl, nextTrackId);
+        syncQueueIndexToCurrentTrack(currentTrackId);
+        if (nextUrl != null && !nextUrl.isEmpty()) {
+            setNextTrackInfo(nextUrl, nextTitle, nextArtist, nextArtworkUrl, nextTrackId);
+        } else {
+            refreshLegacyNextFromQueue();
+        }
 
         if (mediaSession != null) {
             mediaSession.setActive(true);
@@ -379,18 +508,12 @@ public class MusicPlaybackService extends Service {
                         .build()
                 )
                 .setAcceptsDelayedFocusGain(true)
-                .setOnAudioFocusChangeListener(focusChange -> {
-                    if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
-                        pause();
-                    }
-                })
+                .setOnAudioFocusChangeListener(this::handleAudioFocusChange)
                 .build();
             audioManager.requestAudioFocus(audioFocusRequest);
         } else {
             audioManager.requestAudioFocus(
-                focusChange -> {
-                    if (focusChange == AudioManager.AUDIOFOCUS_LOSS) pause();
-                },
+                this::handleAudioFocusChange,
                 AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN
             );
@@ -401,6 +524,27 @@ public class MusicPlaybackService extends Service {
         if (audioManager == null) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && audioFocusRequest != null) {
             audioManager.abandonAudioFocusRequest(audioFocusRequest);
+        }
+    }
+
+    private void handleAudioFocusChange(int focusChange) {
+        switch (focusChange) {
+            case AudioManager.AUDIOFOCUS_LOSS:
+                shouldResumeAfterFocus = false;
+                pause();
+                break;
+            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
+                shouldResumeAfterFocus = !isPaused && mediaPlayer != null && mediaPlayer.isPlaying();
+                pause();
+                break;
+            case AudioManager.AUDIOFOCUS_GAIN:
+                if (shouldResumeAfterFocus && isPaused && isPrepared) {
+                    resume();
+                }
+                shouldResumeAfterFocus = false;
+                break;
+            default:
+                break;
         }
     }
 
@@ -459,7 +603,7 @@ public class MusicPlaybackService extends Service {
             }
         }
         if (wakeLock != null && !wakeLock.isHeld()) {
-            wakeLock.acquire(3 * 60 * 60 * 1000L);
+            wakeLock.acquire();
         }
     }
 

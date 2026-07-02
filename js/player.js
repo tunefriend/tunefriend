@@ -40,6 +40,7 @@ export class Player {
     this._seekHoldUntil = 0;
     this._startPaused = false;
     this._restorePosition = 0;
+    this._loadingNative = false;
     this.onError = null;
     this.onPlaybackOk = null;
 
@@ -76,18 +77,24 @@ export class Player {
     this._nativeListenersSet = true;
     onNativeEnded(() => {
       this._nativePlaying = false;
+      if (this._advanceIndex()) {
+        this._loadCurrent();
+        return;
+      }
       this._saveSession();
       this.onStateChange?.();
     });
     onNativeTrackAdvanced((trackId) => this._onNativeTrackAdvanced(trackId));
     onNativeError((msg) => {
       const now = Date.now();
-      if (now - this._lastErrorAt < 1500) return;
+      if (this._loadingNative) return;
+      if (now - this._lastErrorAt < 2500) return;
       this._lastErrorAt = now;
       if (this._nativePlaying) return;
       this.onError?.(msg);
     });
     onNativePrepared(async () => {
+      this._loadingNative = false;
       if (this._startPaused) {
         const pos = this._restorePosition || 0;
         if (pos > 0) {
@@ -108,6 +115,24 @@ export class Player {
     });
     onNativeSkipNext(() => this.next());
     onNativeSkipPrevious(() => this.prev());
+  }
+
+  _nativeQueueOptions() {
+    return {
+      queue: this.queue,
+      index: this.index,
+      shuffle: this.shuffle,
+      repeat: this.repeat,
+    };
+  }
+
+  _shuffleCopy(songs) {
+    const copy = [...songs];
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
   }
 
   _computeNextIndex() {
@@ -143,10 +168,10 @@ export class Player {
     this._pendingNextIndex = this._computeNextIndex();
     const nextSong = this._pendingNextIndex >= 0 ? this.queue[this._pendingNextIndex] : null;
     try {
-      if (nextSong) await nativeSetNextTrack(nextSong);
-      else await nativeClearNextTrack();
+      if (nextSong) await nativeSetNextTrack(nextSong, this._nativeQueueOptions());
+      else await nativeSetNextTrack(this.current, this._nativeQueueOptions());
     } catch {
-      // Ignore — JS will retry on resume
+      // Native queue still advances in the background service.
     }
   }
 
@@ -185,6 +210,7 @@ export class Player {
       this._nativePlaying = !!status.playing;
       await this._prepareNativeNext();
       this._saveSession();
+      this.onPlaybackOk?.();
       this.onStateChange?.();
     } catch {
       this.onStateChange?.();
@@ -212,7 +238,12 @@ export class Player {
     const session = loadPlaybackSession();
     if (!session?.queue?.length || session.index < 0) return false;
 
-    this.queue = session.queue.map(enrichSong);
+    try {
+      this.queue = session.queue.map(enrichSong);
+    } catch {
+      clearPlaybackSession();
+      return false;
+    }
     this.shuffle = session.shuffle;
     this.repeat = session.repeat;
 
@@ -220,7 +251,13 @@ export class Player {
       this.onLoading?.(true);
       if (this.useNative()) {
         this._ensureNativeListeners();
-        const status = await nativeGetStatus();
+        let status = { position: 0, duration: 0, playing: false, trackId: "" };
+        try {
+          status = await nativeGetStatus();
+        } catch {
+          clearPlaybackSession();
+          return false;
+        }
         if (status.trackId || status.playing) {
           const idx = status.trackId
             ? this.queue.findIndex((s) => String(s.id) === String(status.trackId))
@@ -228,9 +265,16 @@ export class Player {
           this.index = idx >= 0 ? idx : Math.min(session.index, this.queue.length - 1);
           this._duration = status.duration || this.current?.duration || 0;
           this._nativePosition = status.position || session.position || 0;
-          if (status.playing) await nativePause();
+          if (status.playing) {
+            try { await nativePause(); } catch { /* service may be gone */ }
+          }
           this._nativePlaying = false;
-          await this._prepareNativeNext();
+          try {
+            await this._prepareNativeNext();
+          } catch {
+            clearPlaybackSession();
+            return false;
+          }
           this._startNativeTick();
           this.onTrackChange?.(this.current);
           this._saveSession();
@@ -249,7 +293,7 @@ export class Player {
         const nextSong = this._pendingNextIndex >= 0 ? this.queue[this._pendingNextIndex] : null;
         this._restorePosition = session.position || 0;
         this._startPaused = true;
-        await nativePlay(this.current, nextSong);
+        await nativePlay(this.current, nextSong, this._nativeQueueOptions());
         this._startNativeTick();
       } else {
         revokeBlobUrl(this._blobUrl);
@@ -269,10 +313,13 @@ export class Player {
       this._saveSession();
       this.onStateChange?.();
       return true;
-    } catch (e) {
+    } catch {
       clearPlaybackSession();
+      this.queue = [];
+      this.index = -1;
       return false;
     } finally {
+      this._loadingNative = false;
       this.onLoading?.(false);
     }
   }
@@ -308,7 +355,9 @@ export class Player {
   }
 
   async playShuffled(songs) {
-    return this.play(songs, 0, { shuffle: true });
+    if (!songs.length) return;
+    const shuffled = this._shuffleCopy(songs);
+    return this.play(shuffled, 0, { shuffle: false });
   }
 
   toggle() {
@@ -401,11 +450,12 @@ export class Player {
 
       if (this.useNative()) {
         this._ensureNativeListeners();
+        this._loadingNative = true;
         this.audio.pause();
         this.audio.removeAttribute("src");
         this._pendingNextIndex = this._computeNextIndex();
         const nextSong = this._pendingNextIndex >= 0 ? this.queue[this._pendingNextIndex] : null;
-        await nativePlay(song, nextSong);
+        await nativePlay(song, nextSong, this._nativeQueueOptions());
         this.onTrackChange?.(song);
         this._startNativeTick();
         this._saveSession();
@@ -428,6 +478,7 @@ export class Player {
       this.onTrackChange?.(song);
       this._saveSession();
     } catch (e) {
+      this._loadingNative = false;
       this.onError?.(e.message || "Could not load stream");
     } finally {
       this.onLoading?.(false);

@@ -1,0 +1,5 @@
+Fix background playback stopping after two songs
+Native player now keeps the full queue while screen is off
+Fix shuffle starting at the first song every time
+Resume after GPS/audio focus interruptions
+Fewer false playback errors when reopening the app

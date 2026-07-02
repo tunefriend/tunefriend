@@ -55,7 +55,8 @@ export function setupMediaSession(player, getApi) {
   })(player.onStateChange);
 
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && player.isPlaying) {
+    if (document.hidden || player.useNative?.()) return;
+    if (player.isPlaying) {
       player.audio.play().catch(() => {});
     }
   });

@@ -1,0 +1,3 @@
+Sync uses search3 pagination like Symfonium — should get all ~12k songs
+Album scan adds search3 + by-year passes beyond the 1310 album list
+Retries failed album fetches; warns if song count is below server total

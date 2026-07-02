@@ -1,0 +1,3 @@
+Fix crash on app open when restoring a large playlist
+Queue is no longer sent through Android intents (size limit)
+Safer session restore if playback state is invalid

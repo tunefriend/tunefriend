@@ -128,17 +128,169 @@ export class SubsonicAPI {
     };
   }
 
-  async getAlbumList(type = "newest", size = 30, offset = 0) {
-    const r = await this._fetch("getAlbumList2.view", { type, size, offset });
-    return asArray(r.albumList2?.album).map((al) => ({
-      id: al.id,
-      name: al.name,
-      artist: al.artist,
-      artistId: al.artistId,
-      coverArt: al.coverArt,
-      songCount: al.songCount,
-      year: al.year,
-    }));
+  async getAlbumList(type = "newest", size = 30, offset = 0, extra = {}) {
+    const r = await this._fetch("getAlbumList2.view", { type, size, offset, ...extra });
+    return asArray(r.albumList2?.album).map(mapAlbum);
+  }
+
+  async search3Page({
+    query = '""',
+    songCount = 0,
+    songOffset = 0,
+    albumCount = 0,
+    albumOffset = 0,
+    artistCount = 0,
+    artistOffset = 0,
+  } = {}) {
+    const r = await this._fetch("search3.view", {
+      query,
+      songCount,
+      songOffset,
+      albumCount,
+      albumOffset,
+      artistCount,
+      artistOffset,
+    });
+    return r.searchResult3 || r.searchResult || {};
+  }
+
+  /** Symfonium-style paginated song sync via search3 (OpenSubsonic empty query). */
+  async getAllSongsViaSearch({ onProgress } = {}) {
+    const queries = ['""', "*", "+"];
+    for (const query of queries) {
+      const songs = [];
+      const seen = new Set();
+      const pageSize = 500;
+      let offset = 0;
+      let gotPage = false;
+
+      while (true) {
+        const res = await this.search3Page({
+          query,
+          songCount: pageSize,
+          songOffset: offset,
+        });
+        const batch = asArray(res.song).map(mapSong);
+        if (!batch.length) break;
+        gotPage = true;
+        for (const s of batch) {
+          if (seen.has(s.id)) continue;
+          seen.add(s.id);
+          songs.push(s);
+        }
+        onProgress?.(songs.length);
+        if (batch.length < pageSize) break;
+        offset += pageSize;
+      }
+
+      if (gotPage && songs.length) {
+        songs.sort((a, b) => a.title.localeCompare(b.title));
+        return songs;
+      }
+    }
+    return [];
+  }
+
+  async paginateSearchAlbums(albumMap, { onProgress } = {}) {
+    const queries = ['""', "*", "+"];
+    for (const query of queries) {
+      const pageSize = 500;
+      let offset = 0;
+      let gotPage = false;
+      const before = albumMap.size;
+
+      while (true) {
+        const res = await this.search3Page({
+          query,
+          albumCount: pageSize,
+          albumOffset: offset,
+        });
+        const batch = asArray(res.album).map(mapAlbum);
+        if (!batch.length) break;
+        gotPage = true;
+        for (const al of batch) albumMap.set(al.id, al);
+        onProgress?.(albumMap.size);
+        if (batch.length < pageSize) break;
+        offset += pageSize;
+      }
+
+      if (gotPage && albumMap.size > before) return;
+    }
+  }
+
+  async scanAlbumsByYear(albumMap, { onProgress } = {}) {
+    const endYear = new Date().getFullYear() + 1;
+    for (let year = 1950; year <= endYear; year++) {
+      try {
+        let offset = 0;
+        const size = 500;
+        while (true) {
+          const batch = await this.getAlbumList("byYear", size, offset, {
+            fromYear: year,
+            toYear: year,
+          });
+          for (const al of batch) albumMap.set(al.id, al);
+          if (batch.length < size) break;
+          offset += size;
+        }
+      } catch {
+        /* year may have no albums */
+      }
+      if (year % 10 === 0) onProgress?.(albumMap.size);
+    }
+    onProgress?.(albumMap.size);
+  }
+
+  /**
+   * Full album list — merges album list, search3, artists, and by-year scans.
+   */
+  async getAllAlbums(type = "alphabeticalByName", { onProgress } = {}) {
+    const albumMap = new Map();
+
+    const size = 500;
+    let offset = 0;
+    while (true) {
+      const batch = await this.getAlbumList(type, size, offset);
+      for (const al of batch) albumMap.set(al.id, al);
+      onProgress?.(albumMap.size);
+      if (batch.length < size) break;
+      offset += size;
+    }
+
+    await this.paginateSearchAlbums(albumMap, { onProgress });
+
+    const artists = await this.getArtists();
+    const batchSize = 8;
+    for (let i = 0; i < artists.length; i += batchSize) {
+      const batch = artists.slice(i, i + batchSize);
+      const results = await Promise.allSettled(batch.map((a) => this.getArtist(a.id)));
+      for (const r of results) {
+        if (r.status !== "fulfilled") continue;
+        for (const al of r.value.albums) {
+          if (!albumMap.has(al.id)) albumMap.set(al.id, mapAlbum(al));
+        }
+      }
+      onProgress?.(albumMap.size);
+    }
+
+    await this.scanAlbumsByYear(albumMap, { onProgress });
+
+    const albums = [...albumMap.values()];
+    albums.sort((a, b) => a.name.localeCompare(b.name));
+    return albums;
+  }
+
+  async getAlbumWithRetry(id, retries = 3) {
+    let lastErr;
+    for (let i = 0; i < retries; i++) {
+      try {
+        return await this.getAlbum(id);
+      } catch (e) {
+        lastErr = e;
+        if (i < retries - 1) await sleep(400 * (i + 1));
+      }
+    }
+    throw lastErr;
   }
 
   async getAlbum(id) {
@@ -176,41 +328,66 @@ export class SubsonicAPI {
     };
   }
 
-  /** Load all songs — tries search first, then walks synced albums. */
-  async getAllSongs({ albums = null, onProgress } = {}) {
-    for (const q of ["*", "+"]) {
-      try {
-        const r = await this._fetch("search3.view", {
-          query: q,
-          songCount: 5000,
-          albumCount: 0,
-          artistCount: 0,
-        });
-        const res = r.searchResult3 || r.searchResult || {};
-        const songs = asArray(res.song).map(mapSong);
-        if (songs.length) {
-          songs.sort((a, b) => a.title.localeCompare(b.title));
-          return songs;
-        }
-      } catch {
-        /* try next query or album walk */
-      }
-    }
-
-    let albumList = albums;
-    if (!albumList?.length) {
-      albumList = await this.getAlbumList("alphabeticalByName", 500);
-    }
-    if (!albumList.length) return [];
-
+  async getAllSongsFromAlbums(albumList, { onProgress } = {}) {
     const songs = [];
-    const batchSize = 8;
+    const seen = new Set();
+    const batchSize = 4;
+    const total = albumList.length;
+    let failed = 0;
+
     for (let i = 0; i < albumList.length; i += batchSize) {
       const batch = albumList.slice(i, i + batchSize);
-      const results = await Promise.all(batch.map((al) => this.getAlbum(al.id)));
-      for (const album of results) songs.push(...album.songs);
-      onProgress?.(Math.min(i + batchSize, albumList.length), albumList.length);
+      const results = await Promise.allSettled(
+        batch.map((al) => this.getAlbumWithRetry(al.id)),
+      );
+      for (const r of results) {
+        if (r.status !== "fulfilled") {
+          failed++;
+          continue;
+        }
+        for (const song of r.value.songs) {
+          if (seen.has(song.id)) continue;
+          seen.add(song.id);
+          songs.push(song);
+        }
+      }
+      onProgress?.(Math.min(i + batchSize, total), total, "albums", failed);
     }
+    songs.sort((a, b) => a.title.localeCompare(b.title));
+    return { songs, failed };
+  }
+
+  /**
+   * Load all songs — search3 pagination (Symfonium) merged with per-album walk.
+   */
+  async getAllSongs({ albums = null, onProgress } = {}) {
+    let albumList = albums;
+    if (!albumList?.length) {
+      albumList = await this.getAllAlbums("alphabeticalByName", {
+        onProgress: (n) => onProgress?.(0, n, "scan"),
+      });
+    }
+
+    let viaSearch = [];
+    try {
+      viaSearch = await this.getAllSongsViaSearch({
+        onProgress: (n) => onProgress?.(n, 0, "search"),
+      });
+    } catch {
+      /* search3 may be unavailable on older Navidrome */
+    }
+
+    let viaAlbums = [];
+    if (albumList.length) {
+      const result = await this.getAllSongsFromAlbums(albumList, { onProgress });
+      viaAlbums = result.songs;
+    }
+
+    const merged = new Map();
+    for (const s of viaSearch) merged.set(s.id, s);
+    for (const s of viaAlbums) merged.set(s.id, s);
+
+    const songs = [...merged.values()];
     songs.sort((a, b) => a.title.localeCompare(b.title));
     return songs;
   }
@@ -240,6 +417,22 @@ export class SubsonicAPI {
     }
     return `${this.serverUrl}/rest/stream.view?${params}`;
   }
+}
+
+function mapAlbum(al) {
+  return {
+    id: al.id,
+    name: al.name || al.album || al.title || "Unknown",
+    artist: al.artist,
+    artistId: al.artistId,
+    coverArt: al.coverArt,
+    songCount: al.songCount,
+    year: al.year,
+  };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function mapSong(s) {

@@ -16,21 +16,31 @@ export function loadLibraryCache() {
     if (!data?.albums?.length) return null;
     return {
       albums: data.albums,
+      songs: data.songs?.length ? data.songs : null,
       syncedAt: data.syncedAt || null,
       albumCount: data.albums.length,
+      songCount: data.songs?.length || data.songCount || 0,
     };
   } catch {
     return null;
   }
 }
 
-export function saveLibraryCache(albums) {
+export function saveLibraryCache(albums, songs = null) {
   const payload = {
     albums,
     syncedAt: Date.now(),
     albumCount: albums.length,
   };
-  localStorage.setItem(LIBRARY_KEY, JSON.stringify(payload));
+  if (songs?.length) {
+    payload.songs = songs;
+    payload.songCount = songs.length;
+  }
+  try {
+    localStorage.setItem(LIBRARY_KEY, JSON.stringify(payload));
+  } catch {
+    throw new Error("Library too large for phone storage — try again on Wi‑Fi or clear app data");
+  }
   return payload;
 }
 
@@ -39,19 +49,23 @@ export function clearLibraryCache() {
 }
 
 export async function syncLibrary(api, { onProgress } = {}) {
-  const albums = [];
-  const size = 500;
-  let offset = 0;
+  const albums = await api.getAllAlbums("alphabeticalByName", {
+    onProgress: (n) => onProgress?.(`albums ${n}`),
+  });
+  const expectedSongs = albums.reduce((n, a) => n + (a.songCount || 0), 0);
 
-  while (true) {
-    const batch = await api.getAlbumList("alphabeticalByName", size, offset);
-    albums.push(...batch);
-    onProgress?.(albums.length);
-    if (batch.length < size) break;
-    offset += size;
-  }
+  const songs = await api.getAllSongs({
+    albums,
+    onProgress: (done, total, phase) => {
+      if (phase === "search") onProgress?.(`songs ${done} (search)`);
+      else if (phase === "albums" && total) onProgress?.(`songs ${done}/${total}`);
+      else onProgress?.(`songs ${done}`);
+    },
+  });
 
-  return saveLibraryCache(albums);
+  const result = saveLibraryCache(albums, songs);
+  result.expectedSongCount = expectedSongs;
+  return result;
 }
 
 export function formatSyncedAt(ts) {

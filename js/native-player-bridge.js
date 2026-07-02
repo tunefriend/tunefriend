@@ -70,7 +70,20 @@ function trackPayload(song) {
   };
 }
 
-export async function nativePlay(song, nextSong = null) {
+const MAX_NATIVE_QUEUE = 40;
+
+function queuePayload(queue, { index = 0, shuffle = false, repeat = false } = {}) {
+  const start = Math.max(0, index);
+  const slice = queue.slice(start, start + MAX_NATIVE_QUEUE);
+  return {
+    queueJson: JSON.stringify(slice.map(trackPayload)),
+    queueIndex: 0,
+    shuffle,
+    repeat,
+  };
+}
+
+export async function nativePlay(song, nextSong = null, options = {}) {
   const p = getNativePlugin();
   if (!p) throw new Error("Native player unavailable — reinstall latest APK");
   const payload = trackPayload(song);
@@ -82,20 +95,27 @@ export async function nativePlay(song, nextSong = null) {
     payload.nextArtworkUrl = next.artworkUrl;
     payload.nextTrackId = next.trackId;
   }
+  if (options.queue?.length) {
+    Object.assign(payload, queuePayload(options.queue, options));
+  }
   await p.play(payload);
 }
 
-export async function nativeSetNextTrack(song) {
+export async function nativeSetNextTrack(song, options = {}) {
   const p = getNativePlugin();
   if (!p?.setNextTrack || !song) return;
   const next = trackPayload(song);
-  await p.setNextTrack({
+  const payload = {
     nextUrl: next.url,
     nextTitle: next.title,
     nextArtist: next.artist,
     nextArtworkUrl: next.artworkUrl,
     nextTrackId: next.trackId,
-  });
+  };
+  if (options.queue?.length) {
+    Object.assign(payload, queuePayload(options.queue, options));
+  }
+  await p.setNextTrack(payload);
 }
 
 export async function nativeClearNextTrack() {

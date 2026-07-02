@@ -1,0 +1,3 @@
+Faster tab switching — songs and albums load in chunks instead of freezing the UI
+Single tap handler for large lists (no more 9000+ click listeners)
+Tabs switch instantly; list fills in as you scroll

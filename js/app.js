@@ -24,6 +24,7 @@ import {
 } from "./favorites.js";
 import {
   loadLibraryCache,
+  saveLibraryCache,
   syncLibrary,
   clearLibraryCache,
   formatSyncedAt,
@@ -32,6 +33,19 @@ import { clearPlaybackSession } from "./session.js";
 
 let api = null;
 let currentTab = "home";
+let tabRenderGen = 0;
+
+function isTabStale(gen, tab) {
+  return gen !== tabRenderGen || currentTab !== tab;
+}
+
+const LIST_CHUNK = 100;
+const ALBUM_CHUNK = 60;
+const TAB_TITLES = { home: "Home", songs: "Songs", albums: "Albums" };
+
+function nextFrame() {
+  return new Promise((r) => requestAnimationFrame(r));
+}
 
 const els = {
   audio: document.getElementById("audio"),
@@ -140,9 +154,8 @@ function coverImg(coverArt, size = 300) {
   return `<img class="album-cover" src="${api.coverArtUrl(coverArt, size)}" alt="" loading="lazy" />`;
 }
 
-function renderAlbumGrid(albums) {
-  if (!albums.length) return '<div class="empty-state">No albums found</div>';
-  return `<div class="album-grid">${albums.map((al) => `
+function renderAlbumCard(al) {
+  return `
     <div class="album-card-wrap">
       <button class="album-card" data-album="${al.id}">
         <div class="album-cover-wrap">${coverImg(al.coverArt)}</div>
@@ -151,14 +164,25 @@ function renderAlbumGrid(albums) {
       </button>
       <button class="fav-btn album-fav${isAlbumFavorite(al.id) ? " active" : ""}" data-fav-album="${al.id}" aria-label="Favorite album">${favoriteHeartSvg(isAlbumFavorite(al.id))}</button>
     </div>
-  `).join("")}</div>`;
+  `;
 }
 
-function renderSongList(songs, showAlbum = false) {
-  if (!songs.length) return '<div class="empty-state">No songs found</div>';
+function renderAlbumGrid(albums) {
+  if (!albums.length) return '<div class="empty-state">No albums found</div>';
+  return `<div class="album-grid">${albums.map((al) => renderAlbumCard(al)).join("")}</div>`;
+}
+
+function renderAlbumGridSlice(albums, start, count) {
+  const end = Math.min(start + count, albums.length);
+  let html = "";
+  for (let i = start; i < end; i++) html += renderAlbumCard(albums[i]);
+  return html;
+}
+
+function renderSongItem(s, i, showAlbum = false) {
   const currentId = player.current?.id;
-  return `<ul class="song-list">${songs.map((s, i) => `
-    <li class="song-item${s.id === currentId ? " playing" : ""}" data-song-idx="${i}">
+  return `
+    <li class="song-item${s.id === currentId ? " playing" : ""}" data-song-idx="${i}" data-song-id="${s.id}">
       <span class="song-num">${s.track || i + 1}</span>
       <div class="song-info">
         <div class="song-title">${escapeHtml(s.title)}</div>
@@ -167,16 +191,105 @@ function renderSongList(songs, showAlbum = false) {
       <button class="fav-btn song-fav${isSongFavorite(s.id) ? " active" : ""}" data-fav-song="${s.id}" aria-label="Favorite song">${favoriteHeartSvg(isSongFavorite(s.id))}</button>
       <span class="song-dur">${formatDuration(s.duration)}</span>
     </li>
-  `).join("")}</ul>`;
+  `;
+}
+
+function renderSongList(songs, showAlbum = false) {
+  if (!songs.length) return '<div class="empty-state">No songs found</div>';
+  return `<ul class="song-list">${songs.map((s, i) => renderSongItem(s, i, showAlbum)).join("")}</ul>`;
+}
+
+function renderSongListSlice(songs, start, count, showAlbum = false) {
+  const end = Math.min(start + count, songs.length);
+  let html = "";
+  for (let i = start; i < end; i++) html += renderSongItem(songs[i], i, showAlbum);
+  return html;
+}
+
+async function mountSongListIncremental(songs, listEl, gen, showAlbum = true) {
+  for (let i = 0; i < songs.length; i += LIST_CHUNK) {
+    if (gen != null && isTabStale(gen, "songs")) return false;
+    listEl.insertAdjacentHTML("beforeend", renderSongListSlice(songs, i, LIST_CHUNK, showAlbum));
+    if (i + LIST_CHUNK < songs.length) await nextFrame();
+  }
+  return true;
+}
+
+async function mountAlbumGridIncremental(albums, gridEl, gen) {
+  for (let i = 0; i < albums.length; i += ALBUM_CHUNK) {
+    if (gen != null && isTabStale(gen, "albums")) return false;
+    gridEl.insertAdjacentHTML("beforeend", renderAlbumGridSlice(albums, i, ALBUM_CHUNK));
+    if (i + ALBUM_CHUNK < albums.length) await nextFrame();
+  }
+  return true;
+}
+
+function getSongsWithUrls(container) {
+  if (!container._songsWithUrls && container._listSongs?.length) {
+    container._songsWithUrls = songsWithUrls(container._listSongs);
+  }
+  return container._songsWithUrls;
+}
+
+function bindListData(container, songs = [], albums = []) {
+  container._listSongs = songs;
+  container._listAlbums = albums;
+  container._songsWithUrls = null;
+  setupContentDelegation(container);
+}
+
+function setupContentDelegation(container) {
+  if (container._delegated) return;
+  container._delegated = true;
+  container.addEventListener("click", (e) => {
+    const favSong = e.target.closest("[data-fav-song]");
+    if (favSong) {
+      e.stopPropagation();
+      const song = container._listSongs?.find((s) => s.id === favSong.dataset.favSong);
+      if (!song) return;
+      const added = toggleSongFavorite(song);
+      favSong.classList.toggle("active", added);
+      favSong.innerHTML = favoriteHeartSvg(added);
+      showToast(added ? "Added to favorites" : "Removed from favorites");
+      return;
+    }
+    const favAlbum = e.target.closest("[data-fav-album]");
+    if (favAlbum) {
+      e.stopPropagation();
+      const album = container._listAlbums?.find((a) => a.id === favAlbum.dataset.favAlbum);
+      if (!album) return;
+      const added = toggleAlbumFavorite(album);
+      favAlbum.classList.toggle("active", added);
+      favAlbum.innerHTML = favoriteHeartSvg(added);
+      showToast(added ? "Album favorited" : "Album unfavorited");
+      return;
+    }
+    const albumBtn = e.target.closest("[data-album]");
+    if (albumBtn) {
+      openAlbum(albumBtn.dataset.album);
+      return;
+    }
+    const songItem = e.target.closest("[data-song-idx]");
+    if (songItem && container._listSongs?.length) {
+      const withUrls = getSongsWithUrls(container);
+      player.play(withUrls, parseInt(songItem.dataset.songIdx, 10));
+      highlightPlaying();
+    }
+  });
 }
 
 function attachAlbumClicks(container) {
+  if ((container._listAlbums?.length || 0) > 30) return;
   container.querySelectorAll("[data-album]").forEach((el) => {
     el.addEventListener("click", () => openAlbum(el.dataset.album));
   });
 }
 
 function attachFavoriteHandlers(container, songs = [], albums = []) {
+  if (songs.length > 30 || albums.length > 30) {
+    bindListData(container, songs, albums);
+    return;
+  }
   const songMap = new Map(songs.map((s) => [s.id, s]));
   const albumMap = new Map(albums.map((a) => [a.id, a]));
 
@@ -206,6 +319,10 @@ function attachFavoriteHandlers(container, songs = [], albums = []) {
 }
 
 function attachSongClicks(container, songs) {
+  if (songs.length > 30) {
+    bindListData(container, songs, container._listAlbums || []);
+    return;
+  }
   const withUrls = songsWithUrls(songs);
   container.querySelectorAll("[data-song-idx]").forEach((el) => {
     el.addEventListener("click", () => {
@@ -225,11 +342,11 @@ function attachPlayButtons(container, songs) {
 }
 
 function highlightPlaying() {
-  els.content.querySelectorAll(".song-item").forEach((el) => {
-    const idx = parseInt(el.dataset.songIdx, 10);
-    const song = player.queue[idx];
-    el.classList.toggle("playing", song?.id === player.current?.id);
-  });
+  const prev = els.content.querySelector(".song-item.playing");
+  prev?.classList.remove("playing");
+  const id = player.current?.id;
+  if (!id) return;
+  els.content.querySelector(`.song-item[data-song-id="${id}"]`)?.classList.add("playing");
 }
 
 function updatePlayingFavorite(song) {
@@ -352,31 +469,40 @@ async function renderHome() {
 async function getAlbumsForDisplay() {
   const cached = loadLibraryCache();
   if (cached?.albums?.length) return cached.albums;
-  return api.getAlbumList("alphabeticalByName", 500);
+  return api.getAllAlbums("alphabeticalByName");
 }
 
 function updateLibrarySettingsUI() {
   const cache = loadLibraryCache();
   document.getElementById("settings-album-count").textContent =
     cache ? String(cache.albumCount) : "Not synced";
+  document.getElementById("settings-song-count").textContent =
+    cache?.songCount ? String(cache.songCount) : "Not synced";
   document.getElementById("settings-last-sync").textContent =
     formatSyncedAt(cache?.syncedAt);
 }
 
 async function renderAlbums() {
+  const gen = tabRenderGen;
   els.pageTitle.textContent = "Albums";
-  showLoading();
   try {
     const albums = await getAlbumsForDisplay();
+    if (isTabStale(gen, "albums")) return;
     const cached = loadLibraryCache();
     const hint = cached
-      ? ""
-      : '<p class="library-hint">Showing first 500 albums. Go to Settings → Sync Library for the full list.</p>';
-    els.content.innerHTML = `${hint}<div class="section-title">${albums.length} albums</div>${renderAlbumGrid(albums)}`;
-    attachAlbumClicks(els.content);
-    attachFavoriteHandlers(els.content, [], albums);
+      ? `<p class="library-hint">Synced ${formatSyncedAt(cached.syncedAt)} · ${albums.length} albums. Settings → Sync Library to pick up new music.</p>`
+      : '<p class="library-hint">Loading full album list from server…</p>';
+    els.content.innerHTML = `${hint}<div class="section-title">${albums.length} albums</div><div class="album-grid" id="active-album-grid"></div>`;
+    bindListData(els.content, [], albums);
+    const grid = document.getElementById("active-album-grid");
+    if (albums.length > ALBUM_CHUNK) {
+      await mountAlbumGridIncremental(albums, grid, gen);
+    } else {
+      grid.innerHTML = albums.map((al) => renderAlbumCard(al)).join("");
+    }
+    if (!isTabStale(gen, "albums")) attachAlbumClicks(els.content);
   } catch (e) {
-    showError(e.message);
+    if (!isTabStale(gen, "albums")) showError(e.message);
   }
 }
 
@@ -398,48 +524,81 @@ function openSearch() {
   renderSearch();
 }
 
+async function displaySongsList(songs, cache, gen) {
+  if (!songs.length) {
+    els.content.innerHTML = '<div class="empty-state">No songs found. Try Settings → Sync Library first.</div>';
+    return;
+  }
+  const hint = cache?.syncedAt
+    ? `<p class="library-hint">Synced ${formatSyncedAt(cache.syncedAt)} · ${songs.length} songs. Re-sync in Settings after new music is added.</p>`
+    : '<p class="library-hint">Tip: Settings → Sync Library — saves albums and songs for instant browsing.</p>';
+  els.content.innerHTML = `${hint}
+    <div class="album-actions">
+      <button class="quick-btn primary" id="btn-play-all-songs">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        Play All
+      </button>
+      <button class="quick-btn secondary" id="btn-shuffle-all-songs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+        Shuffle
+      </button>
+    </div>
+    <div class="section-title">${songs.length} songs</div>
+    <ul class="song-list" id="active-song-list"></ul>
+  `;
+  bindListData(els.content, songs, []);
+  els.content.querySelector("#btn-play-all-songs")?.addEventListener("click", () => {
+    player.playAll(songsWithUrls(songs));
+  });
+  els.content.querySelector("#btn-shuffle-all-songs")?.addEventListener("click", () => {
+    player.playShuffled(songsWithUrls(songs));
+  });
+  const listEl = document.getElementById("active-song-list");
+  if (songs.length > LIST_CHUNK) {
+    await mountSongListIncremental(songs, listEl, gen, true);
+  } else {
+    listEl.innerHTML = songs.map((s, i) => renderSongItem(s, i, true)).join("");
+  }
+  if (!isTabStale(gen, "songs")) highlightPlaying();
+}
+
 async function renderSongs() {
+  const gen = tabRenderGen;
   els.pageTitle.textContent = "Songs";
+
+  const cache = loadLibraryCache();
+  if (cache?.songs?.length) {
+    await displaySongsList(cache.songs, cache, gen);
+    return;
+  }
+
   showLoading();
   try {
-    const cache = loadLibraryCache();
     const songs = await api.getAllSongs({
       albums: cache?.albums,
       onProgress: (done, total) => {
-        els.content.innerHTML = `<div class="loading"><div class="spinner"></div><span>Loading songs… ${done}/${total}</span></div>`;
+        if (isTabStale(gen, "songs")) return;
+        const label = done === 0
+          ? `Loading albums… ${total}`
+          : `Loading songs… album ${done} of ${total}`;
+        els.content.innerHTML = `<div class="loading"><div class="spinner"></div><span>${label}</span></div>`;
       },
     });
-    if (!songs.length) {
-      els.content.innerHTML = '<div class="empty-state">No songs found. Try Settings → Sync Library first.</div>';
-      return;
+    if (isTabStale(gen, "songs")) return;
+
+    if (songs.length && cache?.albums) {
+      try {
+        saveLibraryCache(cache.albums, songs);
+        updateLibrarySettingsUI();
+      } catch {
+        /* cache optional — list still works this session */
+      }
     }
-    const hint = cache
-      ? ""
-      : '<p class="library-hint">Sync Library in Settings for the complete song list.</p>';
-    els.content.innerHTML = `${hint}
-      <div class="album-actions">
-        <button class="quick-btn primary" id="btn-play-all-songs">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-          Play All
-        </button>
-        <button class="quick-btn secondary" id="btn-shuffle-all-songs">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
-          Shuffle
-        </button>
-      </div>
-      <div class="section-title">${songs.length} songs</div>
-      ${renderSongList(songs, true)}
-    `;
-    attachSongClicks(els.content, songs);
-    attachFavoriteHandlers(els.content, songs, []);
-    els.content.querySelector("#btn-play-all-songs")?.addEventListener("click", () => {
-      player.playAll(songsWithUrls(songs));
-    });
-    els.content.querySelector("#btn-shuffle-all-songs")?.addEventListener("click", () => {
-      player.playShuffled(songsWithUrls(songs));
-    });
+
+    if (isTabStale(gen, "songs")) return;
+    await displaySongsList(songs, cache, gen);
   } catch (e) {
-    showError(e.message);
+    if (!isTabStale(gen, "songs")) showError(e.message);
   }
 }
 
@@ -514,6 +673,8 @@ async function shuffleAll() {
 }
 
 function switchTab(tab) {
+  tabRenderGen++;
+  const gen = tabRenderGen;
   currentTab = tab;
   document.querySelectorAll(".nav-item").forEach((n) => {
     n.classList.toggle("active", n.dataset.tab === tab);
@@ -523,7 +684,12 @@ function switchTab(tab) {
     return;
   }
   showScreen("screen-main");
-  tabRenderers[tab]?.();
+  if (TAB_TITLES[tab]) els.pageTitle.textContent = TAB_TITLES[tab];
+  if (tab === "songs" || tab === "albums") showLoading();
+  requestAnimationFrame(() => {
+    if (gen !== tabRenderGen) return;
+    tabRenderers[tab]?.();
+  });
 }
 
 function renderFavorites() {
@@ -650,10 +816,15 @@ document.getElementById("btn-sync-library").addEventListener("click", async () =
   btn.textContent = "Syncing…";
   try {
     const result = await syncLibrary(api, {
-      onProgress: (n) => { btn.textContent = `Syncing… ${n}`; },
+      onProgress: (msg) => { btn.textContent = `Syncing… ${msg}`; },
     });
     updateLibrarySettingsUI();
-    showToast(`Synced ${result.albumCount} albums`);
+    const songPart = result.songCount ? `, ${result.songCount} songs` : "";
+    let toast = `Synced ${result.albumCount} albums${songPart}`;
+    if (result.expectedSongCount && result.songCount < result.expectedSongCount * 0.95) {
+      toast += ` (${result.expectedSongCount} on server — tap Sync again if low)`;
+    }
+    showToast(toast);
     if (currentTab === "albums") tabRenderers.albums();
     if (currentTab === "songs") tabRenderers.songs();
   } catch (e) {

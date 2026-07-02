@@ -16,6 +16,8 @@ function stripSong(song) {
   return rest;
 }
 
+const MAX_SAVED_QUEUE = 100;
+
 export function savePlaybackSession({ queue, index, position, shuffle, repeat, wasPlaying }) {
   if (!queue?.length || index < 0) {
     localStorage.removeItem(SESSION_KEY);
@@ -23,7 +25,7 @@ export function savePlaybackSession({ queue, index, position, shuffle, repeat, w
   }
   try {
     localStorage.setItem(SESSION_KEY, JSON.stringify({
-      queue: queue.map(stripSong),
+      queue: queue.slice(0, MAX_SAVED_QUEUE).map(stripSong),
       index,
       position: Math.max(0, position || 0),
       shuffle: !!shuffle,

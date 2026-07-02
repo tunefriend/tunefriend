@@ -1,0 +1,3 @@
+Fix Songs tab stopping at ~1300 songs on large libraries
+Load all albums and songs via pagination (no 500 cap)
+Albums tab shows last sync date — re-sync after server adds music
