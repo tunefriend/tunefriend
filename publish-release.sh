@@ -55,7 +55,7 @@ publish_api() {
       "$api/${id}/assets?name=TuneFriend-v${VERSION}.apk" >/dev/null
     echo "Updated release $TAG via API"
   else
-    payload=$(python3 -c "import json; print(json.dumps({'tag_name':'${TAG}','name':'TuneFriend ${TAG}','body':open('${NOTES}').read(),'draft':False,'make_latest':True}))")
+    payload=$(python3 -c "import json; print(json.dumps({'tag_name':'${TAG}','name':'TuneFriend ${TAG}','body':open('${NOTES}').read(),'draft':False,'make_latest':'true'}))")
     curl -sS -X POST -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
       -d "$payload" "$api" >/tmp/tf-release.json
     local id
