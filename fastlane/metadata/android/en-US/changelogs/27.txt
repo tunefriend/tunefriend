@@ -1,0 +1,1 @@
+Back button in headers and Android system back navigates in-app instead of closing the app.

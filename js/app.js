@@ -30,6 +30,7 @@ import {
   formatSyncedAt,
 } from "./library.js";
 import { clearPlaybackSession } from "./session.js";
+import { createBackNav } from "./back-nav.js";
 
 let api = null;
 let currentTab = "home";
@@ -380,7 +381,28 @@ player.onTrackChange = (song) => {
   updatePlayingFavorite(song);
 };
 
+function popMainToRoot() {
+  backNav.setNavDepth("root");
+  if (currentTab === "search") {
+    switchTab(backNav.getLastMainTab() || "home");
+    return;
+  }
+  tabRenderers[currentTab]?.();
+}
+
+const backNav = createBackNav({
+  getActiveScreen: () => document.querySelector(".screen.active")?.id,
+  onBackFromPlayer: () => showScreen("screen-main"),
+  onBackFromFavorites: () => showScreen("screen-main"),
+  onBackFromSettings: (tab) => {
+    showScreen("screen-main");
+    switchTab(tab || "home");
+  },
+  onBackFromMainDrillDown: () => popMainToRoot(),
+});
+
 async function openAlbum(id) {
+  backNav.setNavDepth("album");
   showLoading();
   els.pageTitle.textContent = "Album";
   try {
@@ -418,6 +440,7 @@ async function openAlbum(id) {
 }
 
 async function openArtist(id, name) {
+  backNav.setNavDepth("artist");
   showLoading();
   els.pageTitle.textContent = name || "Artist";
   try {
@@ -517,6 +540,7 @@ function attachArtistClicks(container) {
 }
 
 function openSearch() {
+  backNav.setNavDepth("search");
   currentTab = "search";
   document.querySelectorAll(".nav-item").forEach((n) => {
     n.classList.toggle("active", n.dataset.tab === "home");
@@ -675,7 +699,9 @@ async function shuffleAll() {
 function switchTab(tab) {
   tabRenderGen++;
   const gen = tabRenderGen;
+  if (tab !== "settings" && tab !== "search") backNav.rememberMainTab(tab);
   currentTab = tab;
+  backNav.setNavDepth("root");
   document.querySelectorAll(".nav-item").forEach((n) => {
     n.classList.toggle("active", n.dataset.tab === tab);
   });
@@ -798,8 +824,6 @@ els.loginForm.addEventListener("submit", async (e) => {
 });
 
 document.getElementById("btn-favorites").addEventListener("click", openFavorites);
-
-document.getElementById("btn-back-favorites").addEventListener("click", () => showScreen("screen-main"));
 
 onFavoritesChange(() => {
   updatePlayingFavorite(player.current);

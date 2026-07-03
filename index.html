@@ -51,6 +51,9 @@
     <!-- Main app -->
     <section id="screen-main" class="screen">
       <header class="top-bar">
+        <button class="icon-btn top-bar-back" id="btn-back-main" aria-label="Back" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
         <h2 id="page-title">Home</h2>
         <div class="top-bar-actions">
           <button class="settings-btn" id="btn-favorites" aria-label="Favorites">
@@ -70,7 +73,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
         </button>
         <h2>Favorites</h2>
-        <div style="width:40px"></div>
+        <div class="top-bar-spacer" aria-hidden="true"></div>
       </header>
       <div id="favorites-content" class="favorites-panel"></div>
     </section>
@@ -78,8 +81,11 @@
     <!-- Settings -->
     <section id="screen-settings" class="screen">
       <header class="top-bar">
+        <button class="icon-btn top-bar-back" id="btn-back-settings" aria-label="Back">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
         <h2>Settings</h2>
-        <div class="top-bar-actions"></div>
+        <div class="top-bar-spacer" aria-hidden="true"></div>
       </header>
       <div class="settings-panel">
         <div class="settings-group">
@@ -151,7 +157,7 @@
           <h3>About</h3>
           <div class="settings-row">
             <span class="settings-label">App</span>
-            <span class="settings-value">TuneFriend v2.15</span>
+            <span class="settings-value">TuneFriend v2.16</span>
           </div>
           <div class="settings-row">
             <span class="settings-label">Contact</span>
@@ -204,8 +210,8 @@
     <!-- Full player -->
     <section id="screen-player" class="screen player-screen">
       <header class="top-bar">
-        <button class="icon-btn" id="btn-close-player" aria-label="Close">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        <button class="icon-btn top-bar-back" id="btn-close-player" aria-label="Back">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
         </button>
         <span class="player-label">Now Playing</span>
         <button class="fav-btn player-fav" id="btn-fav" aria-label="Favorite song" disabled>

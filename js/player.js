@@ -647,8 +647,6 @@ export function bindPlayerUI(player, getApi, els) {
   });
 
   npExpand.addEventListener("click", () => showScreen("screen-player"));
-  btnClosePlayer.addEventListener("click", () => showScreen("screen-main"));
-
   let seekCommitting = false;
   async function commitSeek() {
     if (!uiSeeking || seekCommitting) return;

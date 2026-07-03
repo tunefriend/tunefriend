@@ -226,6 +226,15 @@ body {
   min-width: 0;
 }
 
+.top-bar-back[hidden] {
+  display: none;
+}
+
+.top-bar-spacer {
+  width: 40px;
+  flex-shrink: 0;
+}
+
 .settings-btn {
   display: flex;
   align-items: center;

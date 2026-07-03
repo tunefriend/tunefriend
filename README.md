@@ -2,11 +2,11 @@
 
 Stream music from a friend's self-hosted Subsonic server (Navidrome, Airsonic, Gonic, etc.) on Android.
 
-**Latest release:** [v2.15](https://github.com/tunefriend/tunefriend/releases/latest)
+**Latest release:** [v2.16](https://github.com/tunefriend/tunefriend/releases/latest)
 
 ## Install
 
-1. Download **[TuneFriend-v2.15.apk](https://github.com/tunefriend/tunefriend/releases/latest)** from Releases
+1. Download **[TuneFriend-v2.16.apk](https://github.com/tunefriend/tunefriend/releases/latest)** from Releases
 2. Install on Android (allow installs from unknown sources if prompted)
 3. Enter your friend's server URL, username, and password
 4. Optional: **Settings → Sync Library** for the full album list
