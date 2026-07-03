@@ -12,30 +12,37 @@ import { isNativeApp } from "./api.js";
 
 export function createBackNav({
   getActiveScreen,
+  getCurrentTab,
   onBackFromPlayer,
   onBackFromFavorites,
   onBackFromSettings,
   onBackFromMainDrillDown,
+  onBackToHome,
 }) {
   let navDepth = "root";
   let lastMainTab = "home";
+  let wired = false;
+
+  function updateMainBackButton() {
+    const btn = document.getElementById("btn-back-main");
+    if (!btn) return;
+    const tab = getCurrentTab?.() || "home";
+    const show = navDepth !== "root" || (tab !== "home" && tab !== "search");
+    btn.hidden = !show;
+  }
 
   function setNavDepth(depth) {
     navDepth = depth;
-    const btn = document.getElementById("btn-back-main");
-    if (btn) btn.hidden = depth === "root";
+    updateMainBackButton();
   }
 
   function rememberMainTab(tab) {
     if (tab && tab !== "settings" && tab !== "search") lastMainTab = tab;
+    updateMainBackButton();
   }
 
   function getLastMainTab() {
     return lastMainTab;
-  }
-
-  function isMainDrillDown() {
-    return navDepth !== "root";
   }
 
   function handleBack() {
@@ -56,13 +63,29 @@ export function createBackNav({
       onBackFromMainDrillDown?.();
       return true;
     }
+    const tab = getCurrentTab?.() || "home";
+    if (screen === "screen-main" && tab !== "home") {
+      onBackToHome?.();
+      return true;
+    }
     return false;
   }
 
-  function setupNativeBackButton() {
+  function wireUi() {
+    if (wired) return;
+    wired = true;
+    document.getElementById("btn-back-main")?.addEventListener("click", () => handleBack());
+    document.getElementById("btn-back-settings")?.addEventListener("click", () => handleBack());
+    document.getElementById("btn-back-favorites")?.addEventListener("click", () => handleBack());
+    document.getElementById("btn-close-player")?.addEventListener("click", () => handleBack());
+  }
+
+  function setupNativeBridge() {
+    window.__tuneFriendBack = () => handleBack();
+
     if (!isNativeApp()) return;
     const cap = window.Capacitor;
-    const App = cap?.registerPlugin?.("App") ?? cap?.Plugins?.App;
+    const App = cap?.Plugins?.App ?? cap?.registerPlugin?.("App");
     if (!App?.addListener) return;
 
     App.addListener("backButton", () => {
@@ -70,21 +93,23 @@ export function createBackNav({
     });
   }
 
-  function wireBackButtons() {
-    document.getElementById("btn-back-main")?.addEventListener("click", handleBack);
-    document.getElementById("btn-back-settings")?.addEventListener("click", handleBack);
-    document.getElementById("btn-back-favorites")?.addEventListener("click", handleBack);
-    document.getElementById("btn-close-player")?.addEventListener("click", handleBack);
+  function init() {
+    wireUi();
+    setupNativeBridge();
+    updateMainBackButton();
   }
 
-  setupNativeBackButton();
-  wireBackButtons();
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 
   return {
     setNavDepth,
     rememberMainTab,
     getLastMainTab,
-    isMainDrillDown,
     handleBack,
+    updateMainBackButton,
   };
 }

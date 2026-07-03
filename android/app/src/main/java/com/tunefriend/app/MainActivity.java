@@ -14,6 +14,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -21,6 +22,13 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BackgroundMusicPlugin.class);
         super.onCreate(savedInstanceState);
+
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                dispatchBackToWeb();
+            }
+        });
     }
 
     @Override
@@ -38,5 +46,21 @@ public class MainActivity extends BridgeActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
+    }
+
+    private void dispatchBackToWeb() {
+        WebView webView = getBridge() != null ? getBridge().getWebView() : null;
+        if (webView == null) {
+            moveTaskToBack(true);
+            return;
+        }
+        webView.post(() -> webView.evaluateJavascript(
+            "Boolean(window.__tuneFriendBack && window.__tuneFriendBack())",
+            value -> runOnUiThread(() -> {
+                if (value == null || !value.contains("true")) {
+                    moveTaskToBack(true);
+                }
+            })
+        ));
     }
 }

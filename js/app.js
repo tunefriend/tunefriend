@@ -392,13 +392,15 @@ function popMainToRoot() {
 
 const backNav = createBackNav({
   getActiveScreen: () => document.querySelector(".screen.active")?.id,
+  getCurrentTab: () => currentTab,
   onBackFromPlayer: () => showScreen("screen-main"),
   onBackFromFavorites: () => showScreen("screen-main"),
   onBackFromSettings: (tab) => {
     showScreen("screen-main");
-    switchTab(tab || "home");
+    switchTab(tab || "home", { fromBack: true });
   },
   onBackFromMainDrillDown: () => popMainToRoot(),
+  onBackToHome: () => switchTab("home", { fromBack: true }),
 });
 
 async function openAlbum(id) {
@@ -696,12 +698,13 @@ async function shuffleAll() {
   }
 }
 
-function switchTab(tab) {
+function switchTab(tab, { fromBack = false } = {}) {
   tabRenderGen++;
   const gen = tabRenderGen;
-  if (tab !== "settings" && tab !== "search") backNav.rememberMainTab(tab);
+  if (!fromBack && tab !== "settings" && tab !== "search") backNav.rememberMainTab(tab);
   currentTab = tab;
   backNav.setNavDepth("root");
+  backNav.updateMainBackButton?.();
   document.querySelectorAll(".nav-item").forEach((n) => {
     n.classList.toggle("active", n.dataset.tab === tab);
   });
