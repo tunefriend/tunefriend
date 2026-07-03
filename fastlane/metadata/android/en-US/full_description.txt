@@ -12,3 +12,5 @@ Features:
 • Connect to any Subsonic-compatible server
 
 Your friend needs to give you their server URL, username, and password. TuneFriend connects directly — no account with us required.
+
+Contact: tunefriend.music@proton.me

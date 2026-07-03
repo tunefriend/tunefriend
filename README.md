@@ -16,6 +16,10 @@ Stream music from a friend's self-hosted Subsonic server (Navidrome, Airsonic, G
 - **Right now:** Send them the [latest release](https://github.com/tunefriend/tunefriend/releases/latest)
 - **Coming soon:** [F-Droid listing](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/41558) (pending review)
 
+## Contact
+
+Questions or feedback: **[tunefriend.music@proton.me](mailto:tunefriend.music@proton.me)**
+
 ## What friends need from you
 
 If you're hosting the music server, give them:

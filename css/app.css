@@ -800,6 +800,11 @@ body {
   text-align: right;
 }
 
+.settings-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
 .settings-row {
   display: flex;
   justify-content: space-between;
