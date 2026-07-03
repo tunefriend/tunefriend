@@ -937,10 +937,11 @@ async function init() {
   showScreen("screen-login");
 }
 
+let syncNativeTimer = null;
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && api) {
-    player.syncFromNative?.();
-  }
+  if (document.visibilityState !== "visible" || !api) return;
+  clearTimeout(syncNativeTimer);
+  syncNativeTimer = setTimeout(() => player.syncFromNative?.(), 800);
 });
 
 if ("serviceWorker" in navigator && !isNativeApp()) {

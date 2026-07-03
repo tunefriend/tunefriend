@@ -126,7 +126,7 @@ public class MusicPlaybackService extends Service {
     }
 
     public static int getPositionMs() {
-        if (instance == null || instance.mediaPlayer == null) return 0;
+        if (instance == null || instance.mediaPlayer == null || !instance.isPrepared) return 0;
         try {
             return instance.mediaPlayer.getCurrentPosition();
         } catch (Exception e) {
@@ -135,7 +135,7 @@ public class MusicPlaybackService extends Service {
     }
 
     public static int getDurationMs() {
-        if (instance == null || instance.mediaPlayer == null) return 0;
+        if (instance == null || instance.mediaPlayer == null || !instance.isPrepared) return 0;
         try {
             int d = instance.mediaPlayer.getDuration();
             return d > 0 ? d : 0;
@@ -145,7 +145,7 @@ public class MusicPlaybackService extends Service {
     }
 
     public static boolean isCurrentlyPlaying() {
-        if (instance == null || instance.mediaPlayer == null) return false;
+        if (instance == null || instance.mediaPlayer == null || !instance.isPrepared) return false;
         try {
             return instance.mediaPlayer.isPlaying();
         } catch (Exception e) {
@@ -326,6 +326,7 @@ public class MusicPlaybackService extends Service {
             String trackId = intent != null ? intent.getStringExtra("trackId") : currentTrackId;
             syncQueueIndexToCurrentTrack(trackId);
             refreshLegacyNextFromQueue();
+            pendingQueueJson = null;
         } catch (Exception ignored) {}
     }
 
@@ -451,6 +452,7 @@ public class MusicPlaybackService extends Service {
             mediaPlayer.setOnErrorListener((mp, what, extra) -> {
                 if (releasingPlayer) return true;
                 isPrepared = false;
+                releasePlayer();
                 if (callback != null) callback.onError("Playback error");
                 return true;
             });

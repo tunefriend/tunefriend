@@ -82,7 +82,7 @@ public class BackgroundMusicPlugin extends Plugin {
         intent.putExtra("nextArtist", call.getString("nextArtist", ""));
         intent.putExtra("nextArtworkUrl", call.getString("nextArtworkUrl", ""));
         intent.putExtra("nextTrackId", call.getString("nextTrackId", ""));
-        putQueueExtras(intent, call);
+        putModeExtras(intent, call);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getContext().startForegroundService(intent);
@@ -107,25 +107,30 @@ public class BackgroundMusicPlugin extends Plugin {
         intent.putExtra("nextArtist", call.getString("nextArtist", ""));
         intent.putExtra("nextArtworkUrl", call.getString("nextArtworkUrl", ""));
         intent.putExtra("nextTrackId", call.getString("nextTrackId", ""));
-        putQueueExtras(intent, call);
+        putModeExtras(intent, call);
         getContext().startService(intent);
         call.resolve();
     }
 
-    private void putQueueExtras(Intent intent, PluginCall call) {
+    @PluginMethod
+    public void setQueue(PluginCall call) {
         String queueJson = call.getString("queueJson");
+        if (queueJson == null || queueJson.isEmpty()) {
+            call.resolve();
+            return;
+        }
         int queueIndex = call.getInt("queueIndex", 0);
         boolean shuffle = call.getBoolean("shuffle", false);
         boolean repeat = call.getBoolean("repeat", false);
-        if (queueJson != null && !queueJson.isEmpty()) {
-            MusicPlaybackService.setQueueState(queueJson, queueIndex, shuffle, repeat);
-        }
+        MusicPlaybackService.setQueueState(queueJson, queueIndex, shuffle, repeat);
+        call.resolve();
+    }
+
+    private void putModeExtras(Intent intent, PluginCall call) {
         JSObject data = call.getData();
-        if (data != null) {
-            if (data.has("shuffle")) intent.putExtra("shuffle", shuffle);
-            if (data.has("repeat")) intent.putExtra("repeat", repeat);
-            if (data.has("queueIndex")) intent.putExtra("queueIndex", queueIndex);
-        }
+        if (data == null) return;
+        if (data.has("shuffle")) intent.putExtra("shuffle", call.getBoolean("shuffle", false));
+        if (data.has("repeat")) intent.putExtra("repeat", call.getBoolean("repeat", false));
     }
 
     @PluginMethod
@@ -163,9 +168,11 @@ public class BackgroundMusicPlugin extends Plugin {
 
     @PluginMethod
     public void getStatus(PluginCall call) {
+        boolean prepared = MusicPlaybackService.isPrepared();
         JSObject ret = new JSObject();
-        ret.put("position", MusicPlaybackService.getPositionMs() / 1000.0);
-        ret.put("duration", MusicPlaybackService.getDurationMs() / 1000.0);
+        ret.put("prepared", prepared);
+        ret.put("position", prepared ? MusicPlaybackService.getPositionMs() / 1000.0 : 0);
+        ret.put("duration", prepared ? MusicPlaybackService.getDurationMs() / 1000.0 : 0);
         ret.put("playing", MusicPlaybackService.isCurrentlyPlaying());
         ret.put("trackId", MusicPlaybackService.getCurrentTrackId());
         call.resolve(ret);

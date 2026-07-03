@@ -72,20 +72,29 @@ function trackPayload(song) {
 
 const MAX_NATIVE_QUEUE = 40;
 
-function queuePayload(queue, { index = 0, shuffle = false, repeat = false } = {}) {
+function queueSlice(queue, index) {
   const start = Math.max(0, index);
-  const slice = queue.slice(start, start + MAX_NATIVE_QUEUE);
-  return {
+  return queue.slice(start, start + MAX_NATIVE_QUEUE);
+}
+
+export async function nativeSetQueue(queue, { index = 0, shuffle = false, repeat = false } = {}) {
+  const p = getNativePlugin();
+  if (!p?.setQueue || !queue?.length) return;
+  const slice = queueSlice(queue, index);
+  await p.setQueue({
     queueJson: JSON.stringify(slice.map(trackPayload)),
     queueIndex: 0,
     shuffle,
     repeat,
-  };
+  });
 }
 
 export async function nativePlay(song, nextSong = null, options = {}) {
   const p = getNativePlugin();
   if (!p) throw new Error("Native player unavailable — reinstall latest APK");
+  if (options.queue?.length) {
+    await nativeSetQueue(options.queue, options);
+  }
   const payload = trackPayload(song);
   if (nextSong) {
     const next = trackPayload(nextSong);
@@ -95,15 +104,17 @@ export async function nativePlay(song, nextSong = null, options = {}) {
     payload.nextArtworkUrl = next.artworkUrl;
     payload.nextTrackId = next.trackId;
   }
-  if (options.queue?.length) {
-    Object.assign(payload, queuePayload(options.queue, options));
-  }
+  if (options.shuffle != null) payload.shuffle = options.shuffle;
+  if (options.repeat != null) payload.repeat = options.repeat;
   await p.play(payload);
 }
 
 export async function nativeSetNextTrack(song, options = {}) {
   const p = getNativePlugin();
   if (!p?.setNextTrack || !song) return;
+  if (options.queue?.length) {
+    await nativeSetQueue(options.queue, options);
+  }
   const next = trackPayload(song);
   const payload = {
     nextUrl: next.url,
@@ -112,9 +123,8 @@ export async function nativeSetNextTrack(song, options = {}) {
     nextArtworkUrl: next.artworkUrl,
     nextTrackId: next.trackId,
   };
-  if (options.queue?.length) {
-    Object.assign(payload, queuePayload(options.queue, options));
-  }
+  if (options.shuffle != null) payload.shuffle = options.shuffle;
+  if (options.repeat != null) payload.repeat = options.repeat;
   await p.setNextTrack(payload);
 }
 
@@ -136,7 +146,7 @@ export async function nativeStop() {
 
 export async function nativeGetStatus() {
   const p = getNativePlugin();
-  if (!p?.getStatus) return { position: 0, duration: 0, playing: false, trackId: "" };
+  if (!p?.getStatus) return { position: 0, duration: 0, playing: false, trackId: "", prepared: false };
   return p.getStatus();
 }
 

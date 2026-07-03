@@ -41,6 +41,10 @@ export class Player {
     this._startPaused = false;
     this._restorePosition = 0;
     this._loadingNative = false;
+    this._recoveringNative = false;
+    this._lastSyncAt = 0;
+    this._tickUnprepared = 0;
+    this._tickMs = 500;
     this.onError = null;
     this.onPlaybackOk = null;
 
@@ -85,14 +89,7 @@ export class Player {
       this.onStateChange?.();
     });
     onNativeTrackAdvanced((trackId) => this._onNativeTrackAdvanced(trackId));
-    onNativeError((msg) => {
-      const now = Date.now();
-      if (this._loadingNative) return;
-      if (now - this._lastErrorAt < 2500) return;
-      this._lastErrorAt = now;
-      if (this._nativePlaying) return;
-      this.onError?.(msg);
-    });
+    onNativeError((msg) => this._handleNativeError(msg));
     onNativePrepared(async () => {
       this._loadingNative = false;
       if (this._startPaused) {
@@ -124,6 +121,27 @@ export class Player {
       shuffle: this.shuffle,
       repeat: this.repeat,
     };
+  }
+
+  async _handleNativeError(msg) {
+    const now = Date.now();
+    if (this._loadingNative || this._recoveringNative) return;
+    if (now - this._lastErrorAt < 2500) return;
+    this._lastErrorAt = now;
+    if (!this.current) {
+      this.onError?.(msg);
+      return;
+    }
+    this._recoveringNative = true;
+    try {
+      this._nativePlaying = false;
+      await nativeStop();
+      await this._loadCurrent();
+    } catch {
+      this.onError?.(msg);
+    } finally {
+      this._recoveringNative = false;
+    }
   }
 
   _shuffleCopy(songs) {
@@ -196,6 +214,9 @@ export class Player {
 
   async syncFromNative() {
     if (!this.useNative()) return;
+    const now = Date.now();
+    if (now - this._lastSyncAt < 3000) return;
+    this._lastSyncAt = now;
     try {
       const status = await nativeGetStatus();
       if (status.trackId && this.queue.length) {
@@ -208,7 +229,13 @@ export class Player {
       this._nativePosition = status.position || 0;
       if (status.duration > 0) this._duration = status.duration;
       this._nativePlaying = !!status.playing;
-      await this._prepareNativeNext();
+      if (!status.prepared && !status.playing && this.current) {
+        await this._handleNativeError("Playback error");
+        return;
+      }
+      if (status.prepared || status.playing) {
+        await this._prepareNativeNext();
+      }
       this._saveSession();
       this.onPlaybackOk?.();
       this.onStateChange?.();
@@ -487,9 +514,27 @@ export class Player {
 
   _startNativeTick() {
     clearInterval(this._tickTimer);
-    this._tickTimer = setInterval(async () => {
+    this._tickUnprepared = 0;
+    this._tickMs = 500;
+    const tick = async () => {
+      if (!this.useNative() || !this.current) return;
       try {
         const status = await nativeGetStatus();
+        if (!status.prepared && !status.playing) {
+          this._tickUnprepared++;
+          if (this._tickUnprepared >= 6 && this._tickMs < 2000) {
+            this._tickMs = 2000;
+            clearInterval(this._tickTimer);
+            this._tickTimer = setInterval(tick, this._tickMs);
+          }
+          return;
+        }
+        this._tickUnprepared = 0;
+        if (this._tickMs > 500) {
+          this._tickMs = 500;
+          clearInterval(this._tickTimer);
+          this._tickTimer = setInterval(tick, this._tickMs);
+        }
         if (Date.now() >= this._seekHoldUntil) {
           this._nativePosition = status.position || 0;
         }
@@ -500,7 +545,8 @@ export class Player {
       } catch {
         this.onStateChange?.();
       }
-    }, 500);
+    };
+    this._tickTimer = setInterval(tick, this._tickMs);
   }
 
   async stop() {
