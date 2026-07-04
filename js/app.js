@@ -24,6 +24,7 @@ import {
 } from "./favorites.js";
 import {
   loadLibraryCache,
+  initLibraryCache,
   saveLibraryCache,
   syncLibrary,
   clearLibraryCache,
@@ -815,6 +816,7 @@ els.loginForm.addEventListener("submit", async (e) => {
     setupMediaSession(player, () => api);
     showScreen("screen-main");
     showBottomDock(true);
+    await initLibraryCache();
     await restorePlayback();
     switchTab("home");
   } catch (err) {
@@ -954,6 +956,7 @@ async function init() {
       setupMediaSession(player, () => api);
       showScreen("screen-main");
       showBottomDock(true);
+      await initLibraryCache();
       await restorePlayback();
       switchTab("home");
       return;

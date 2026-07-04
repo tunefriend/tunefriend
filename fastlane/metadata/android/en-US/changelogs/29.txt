@@ -1,0 +1,1 @@
+Fix library sync for large collections using IndexedDB instead of limited phone storage.
