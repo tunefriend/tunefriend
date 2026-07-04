@@ -968,11 +968,21 @@ async function init() {
 }
 
 let syncNativeTimer = null;
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState !== "visible" || !api) return;
+function scheduleNativeSync() {
+  if (!api) return;
   clearTimeout(syncNativeTimer);
   syncNativeTimer = setTimeout(() => player.syncFromNative?.(), 800);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") scheduleNativeSync();
 });
+if (isNativeApp()) {
+  import("@capacitor/app").then(({ App }) => {
+    App.addListener("appStateChange", ({ isActive }) => {
+      if (isActive) scheduleNativeSync();
+    });
+  }).catch(() => {});
+}
 
 if ("serviceWorker" in navigator && !isNativeApp()) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});

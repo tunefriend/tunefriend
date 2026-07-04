@@ -78,6 +78,7 @@ public class MusicPlaybackService extends Service {
     private boolean isPrepared = false;
     private boolean releasingPlayer = false;
     private boolean shouldResumeAfterFocus = false;
+    private boolean hasAudioFocus = false;
 
     private static class TrackInfo {
         String url;
@@ -500,8 +501,11 @@ public class MusicPlaybackService extends Service {
     }
 
     private void requestAudioFocus() {
-        if (audioManager == null) return;
+        if (audioManager == null || hasAudioFocus) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (audioFocusRequest != null) {
+                audioManager.abandonAudioFocusRequest(audioFocusRequest);
+            }
             audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(
                     new AudioAttributes.Builder()
@@ -512,34 +516,43 @@ public class MusicPlaybackService extends Service {
                 .setAcceptsDelayedFocusGain(true)
                 .setOnAudioFocusChangeListener(this::handleAudioFocusChange)
                 .build();
-            audioManager.requestAudioFocus(audioFocusRequest);
+            int result = audioManager.requestAudioFocus(audioFocusRequest);
+            hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
         } else {
-            audioManager.requestAudioFocus(
+            int result = audioManager.requestAudioFocus(
                 this::handleAudioFocusChange,
                 AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN
             );
+            hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
         }
     }
 
     private void abandonAudioFocus() {
-        if (audioManager == null) return;
+        if (audioManager == null || !hasAudioFocus) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && audioFocusRequest != null) {
             audioManager.abandonAudioFocusRequest(audioFocusRequest);
+            audioFocusRequest = null;
+        } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            audioManager.abandonAudioFocus(this::handleAudioFocusChange);
         }
+        hasAudioFocus = false;
     }
 
     private void handleAudioFocusChange(int focusChange) {
         switch (focusChange) {
             case AudioManager.AUDIOFOCUS_LOSS:
-                shouldResumeAfterFocus = false;
+                shouldResumeAfterFocus = !isPaused && mediaPlayer != null && mediaPlayer.isPlaying();
                 pause();
+                hasAudioFocus = false;
                 break;
             case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
+            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
                 shouldResumeAfterFocus = !isPaused && mediaPlayer != null && mediaPlayer.isPlaying();
                 pause();
                 break;
             case AudioManager.AUDIOFOCUS_GAIN:
+                hasAudioFocus = true;
                 if (shouldResumeAfterFocus && isPaused && isPrepared) {
                     resume();
                 }

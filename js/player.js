@@ -219,6 +219,7 @@ export class Player {
     this._lastSyncAt = now;
     try {
       const status = await nativeGetStatus();
+      const session = loadPlaybackSession();
       if (status.trackId && this.queue.length) {
         const idx = this.queue.findIndex((s) => String(s.id) === String(status.trackId));
         if (idx >= 0 && idx !== this.index) {
@@ -233,7 +234,19 @@ export class Player {
         await this._handleNativeError("Playback error");
         return;
       }
-      if (status.prepared || status.playing) {
+      const shouldResume = status.prepared && !status.playing && (
+        session?.wasPlaying || this._nativePlaying
+      );
+      if (shouldResume) {
+        try {
+          await nativeResume();
+          const after = await nativeGetStatus();
+          this._nativePlaying = !!after.playing;
+        } catch {
+          // Service may have been stopped by the system.
+        }
+      }
+      if (status.prepared || status.playing || this._nativePlaying) {
         await this._prepareNativeNext();
       }
       this._saveSession();
