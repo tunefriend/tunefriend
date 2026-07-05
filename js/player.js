@@ -45,6 +45,12 @@ export class Player {
     this._lastSyncAt = 0;
     this._tickUnprepared = 0;
     this._tickMs = 500;
+    this._loadGen = 0;
+    this._lastLoadAt = 0;
+    this._preparingNext = false;
+    this._errorTrackId = "";
+    this._errorRetries = 0;
+    this.resolveSong = null;
     this.onError = null;
     this.onPlaybackOk = null;
 
@@ -92,6 +98,8 @@ export class Player {
     onNativeError((msg) => this._handleNativeError(msg));
     onNativePrepared(async () => {
       this._loadingNative = false;
+      this._errorTrackId = "";
+      this._errorRetries = 0;
       if (this._startPaused) {
         const pos = this._restorePosition || 0;
         if (pos > 0) {
@@ -114,13 +122,27 @@ export class Player {
     onNativeSkipPrevious(() => this.prev());
   }
 
+  _freshSong(song) {
+    if (!song) return song;
+    const fresh = this.resolveSong ? this.resolveSong(song) : song;
+    const idx = this.queue.findIndex((s) => String(s.id) === String(fresh.id));
+    if (idx >= 0) this.queue[idx] = fresh;
+    return fresh;
+  }
+
   _nativeQueueOptions() {
+    const slice = this.queue.slice(this.index, this.index + 40).map((s) => this._freshSong(s));
     return {
-      queue: this.queue,
-      index: this.index,
+      queue: slice,
+      index: 0,
       shuffle: this.shuffle,
       repeat: this.repeat,
     };
+  }
+
+  _canAutoRecover() {
+    if (this._loadingNative || this._recoveringNative) return false;
+    return Date.now() - this._lastLoadAt > 4000;
   }
 
   async _handleNativeError(msg) {
@@ -132,10 +154,23 @@ export class Player {
       this.onError?.(msg);
       return;
     }
+    const trackId = String(this.current.id);
+    if (trackId === this._errorTrackId) {
+      this._errorRetries++;
+    } else {
+      this._errorTrackId = trackId;
+      this._errorRetries = 1;
+    }
     this._recoveringNative = true;
     try {
       this._nativePlaying = false;
       await nativeStop();
+      if (this._errorRetries >= 2 && this._advanceIndex()) {
+        this._errorTrackId = "";
+        this._errorRetries = 0;
+        await this._loadCurrent();
+        return;
+      }
       await this._loadCurrent();
     } catch {
       this.onError?.(msg);
@@ -182,14 +217,20 @@ export class Player {
   }
 
   async _prepareNativeNext() {
-    if (!this.useNative() || !this.current) return;
-    this._pendingNextIndex = this._computeNextIndex();
-    const nextSong = this._pendingNextIndex >= 0 ? this.queue[this._pendingNextIndex] : null;
+    if (!this.useNative() || !this.current || this._preparingNext) return;
+    this._preparingNext = true;
     try {
+      this._pendingNextIndex = this._computeNextIndex();
+      const nextSong = this._pendingNextIndex >= 0
+        ? this._freshSong(this.queue[this._pendingNextIndex])
+        : null;
+      const current = this._freshSong(this.current);
       if (nextSong) await nativeSetNextTrack(nextSong, this._nativeQueueOptions());
-      else await nativeSetNextTrack(this.current, this._nativeQueueOptions());
+      else await nativeSetNextTrack(current, this._nativeQueueOptions());
     } catch {
       // Native queue still advances in the background service.
+    } finally {
+      this._preparingNext = false;
     }
   }
 
@@ -205,6 +246,8 @@ export class Player {
     this._duration = this.current?.duration || 0;
     this._nativePosition = 0;
     this._nativePlaying = true;
+    this._errorTrackId = "";
+    this._errorRetries = 0;
     this.onPlaybackOk?.();
     this.onTrackChange?.(this.current);
     this._prepareNativeNext();
@@ -230,13 +273,13 @@ export class Player {
       this._nativePosition = status.position || 0;
       if (status.duration > 0) this._duration = status.duration;
       this._nativePlaying = !!status.playing;
-      if (!status.prepared && !status.playing && this.current) {
+      if (!status.prepared && !status.playing && this.current && this._canAutoRecover()) {
         await this._handleNativeError("Playback error");
         return;
       }
-      const shouldResume = status.prepared && !status.playing && (
-        session?.wasPlaying || this._nativePlaying
-      );
+      const shouldResume = status.prepared && !status.playing
+        && session?.wasPlaying
+        && this._canAutoRecover();
       if (shouldResume) {
         try {
           await nativeResume();
@@ -478,12 +521,15 @@ export class Player {
   }
 
   async _loadCurrent() {
-    const song = this.current;
-    if (!song) return;
+    if (!this.current) return;
+    const loadGen = ++this._loadGen;
+    const song = this._freshSong(this.current);
+    if (loadGen !== this._loadGen) return;
 
     this._duration = song.duration || 0;
     this._nativePlaying = false;
     this._nativePosition = 0;
+    this._lastLoadAt = Date.now();
 
     try {
       this.onLoading?.(true);
@@ -494,8 +540,11 @@ export class Player {
         this.audio.pause();
         this.audio.removeAttribute("src");
         this._pendingNextIndex = this._computeNextIndex();
-        const nextSong = this._pendingNextIndex >= 0 ? this.queue[this._pendingNextIndex] : null;
+        const nextSong = this._pendingNextIndex >= 0
+          ? this._freshSong(this.queue[this._pendingNextIndex])
+          : null;
         await nativePlay(song, nextSong, this._nativeQueueOptions());
+        if (loadGen !== this._loadGen) return;
         this.onTrackChange?.(song);
         this._startNativeTick();
         this._saveSession();

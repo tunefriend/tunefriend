@@ -79,6 +79,7 @@ public class MusicPlaybackService extends Service {
     private boolean releasingPlayer = false;
     private boolean shouldResumeAfterFocus = false;
     private boolean hasAudioFocus = false;
+    private int errorSkipCount = 0;
 
     private static class TrackInfo {
         String url;
@@ -438,6 +439,7 @@ public class MusicPlaybackService extends Service {
             mediaPlayer.setDataSource(url);
             mediaPlayer.setOnPreparedListener(mp -> {
                 isPrepared = true;
+                errorSkipCount = 0;
                 mp.start();
                 isPaused = false;
                 updatePlaybackState(true);
@@ -454,6 +456,11 @@ public class MusicPlaybackService extends Service {
                 if (releasingPlayer) return true;
                 isPrepared = false;
                 releasePlayer();
+                if (errorSkipCount < 3 && advanceToNextTrack()) {
+                    errorSkipCount++;
+                    return true;
+                }
+                errorSkipCount = 0;
                 if (callback != null) callback.onError("Playback error");
                 return true;
             });

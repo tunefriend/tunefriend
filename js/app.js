@@ -813,6 +813,7 @@ els.loginForm.addEventListener("submit", async (e) => {
     await testApi.ping();
     api = testApi;
     saveConfig(config);
+    player.resolveSong = enrichSong;
     setupMediaSession(player, () => api);
     showScreen("screen-main");
     showBottomDock(true);
@@ -953,6 +954,7 @@ async function init() {
     try {
       api = new SubsonicAPI(config);
       await api.ping();
+      player.resolveSong = enrichSong;
       setupMediaSession(player, () => api);
       showScreen("screen-main");
       showBottomDock(true);
