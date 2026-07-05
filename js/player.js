@@ -50,6 +50,7 @@ export class Player {
     this._preparingNext = false;
     this._errorTrackId = "";
     this._errorRetries = 0;
+    this._transcodeIds = new Set();
     this.resolveSong = null;
     this.onError = null;
     this.onPlaybackOk = null;
@@ -124,7 +125,8 @@ export class Player {
 
   _freshSong(song) {
     if (!song) return song;
-    const fresh = this.resolveSong ? this.resolveSong(song) : song;
+    const transcode = this._transcodeIds.has(String(song.id));
+    const fresh = this.resolveSong ? this.resolveSong(song, { transcode }) : song;
     const idx = this.queue.findIndex((s) => String(s.id) === String(fresh.id));
     if (idx >= 0) this.queue[idx] = fresh;
     return fresh;
@@ -165,12 +167,19 @@ export class Player {
     try {
       this._nativePlaying = false;
       await nativeStop();
+      if (!this._transcodeIds.has(trackId)) {
+        this._transcodeIds.add(trackId);
+        await new Promise((r) => setTimeout(r, 350));
+        await this._loadCurrent();
+        return;
+      }
       if (this._errorRetries >= 2 && this._advanceIndex()) {
         this._errorTrackId = "";
         this._errorRetries = 0;
         await this._loadCurrent();
         return;
       }
+      await new Promise((r) => setTimeout(r, 350));
       await this._loadCurrent();
     } catch {
       this.onError?.(msg);

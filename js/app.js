@@ -268,7 +268,7 @@ function setupContentDelegation(container) {
     }
     const albumBtn = e.target.closest("[data-album]");
     if (albumBtn) {
-      openAlbum(albumBtn.dataset.album);
+      openAlbum(albumBtn.dataset.album, { fromScreen: container._albumFromScreen });
       return;
     }
     const songItem = e.target.closest("[data-song-idx]");
@@ -280,10 +280,11 @@ function setupContentDelegation(container) {
   });
 }
 
-function attachAlbumClicks(container) {
+function attachAlbumClicks(container, fromScreen) {
+  if (fromScreen) container._albumFromScreen = fromScreen;
   if ((container._listAlbums?.length || 0) > 30) return;
   container.querySelectorAll("[data-album]").forEach((el) => {
-    el.addEventListener("click", () => openAlbum(el.dataset.album));
+    el.addEventListener("click", () => openAlbum(el.dataset.album, { fromScreen: container._albumFromScreen }));
   });
 }
 
@@ -383,7 +384,12 @@ player.onTrackChange = (song) => {
 };
 
 function popMainToRoot() {
+  const returnTo = backNav.consumeReturnScreen();
   backNav.setNavDepth("root");
+  if (returnTo) {
+    showScreen(returnTo);
+    return;
+  }
   if (currentTab === "search") {
     switchTab(backNav.getLastMainTab() || "home");
     return;
@@ -404,7 +410,11 @@ const backNav = createBackNav({
   onBackToHome: () => switchTab("home", { fromBack: true }),
 });
 
-async function openAlbum(id) {
+async function openAlbum(id, { fromScreen } = {}) {
+  if (fromScreen) {
+    showScreen("screen-main");
+    backNav.setReturnScreen(fromScreen);
+  }
   backNav.setNavDepth("album");
   showLoading();
   els.pageTitle.textContent = "Album";
@@ -756,8 +766,10 @@ function renderFavorites() {
   }
   panel.innerHTML = html;
 
+  bindListData(panel, songs, albums);
+  panel._albumFromScreen = "screen-favorites";
   attachSongClicks(panel, songs);
-  attachAlbumClicks(panel);
+  attachAlbumClicks(panel, "screen-favorites");
   attachFavoriteHandlers(panel, songs, albums);
 
   panel.querySelector("#btn-play-fav-songs")?.addEventListener("click", () => {
@@ -925,10 +937,11 @@ function setupNativeUI() {
   document.getElementById("use-proxy").checked = false;
 }
 
-function enrichSong(song) {
+function enrichSong(song, { transcode = false } = {}) {
+  const useTranscode = transcode || !isNativeApp();
   return {
     ...song,
-    streamUrl: api.streamUrl(song.id, { transcode: !isNativeApp() }),
+    streamUrl: api.streamUrl(song.id, { transcode: useTranscode }),
     coverArtUrl: song.coverArt ? api.coverArtUrl(song.coverArt, 512) : "",
   };
 }

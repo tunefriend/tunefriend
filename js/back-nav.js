@@ -21,6 +21,7 @@ export function createBackNav({
 }) {
   let navDepth = "root";
   let lastMainTab = "home";
+  let returnScreen = null;
   let wired = false;
 
   function updateMainBackButton() {
@@ -43,6 +44,16 @@ export function createBackNav({
 
   function getLastMainTab() {
     return lastMainTab;
+  }
+
+  function setReturnScreen(screen) {
+    returnScreen = screen || null;
+  }
+
+  function consumeReturnScreen() {
+    const screen = returnScreen;
+    returnScreen = null;
+    return screen;
   }
 
   function handleBack() {
@@ -109,6 +120,8 @@ export function createBackNav({
     setNavDepth,
     rememberMainTab,
     getLastMainTab,
+    setReturnScreen,
+    consumeReturnScreen,
     handleBack,
     updateMainBackButton,
   };
