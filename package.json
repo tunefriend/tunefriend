@@ -5,8 +5,9 @@
   "scripts": {
     "sync:www": "rm -rf www && mkdir -p www && cp index.html manifest.json sw.js www/ && cp node_modules/@capacitor/core/dist/capacitor.js www/capacitor.js && cp -r css js icons www/ && echo v2.23 > www/VERSION.txt",
     "cap:sync": "npm run sync:www && npx cap sync android",
-    "build:apk": "npm run cap:sync && cd android && ./gradlew assembleDebug",
-    "install:apk": "adb install -r android/app/build/outputs/apk/debug/app-debug.apk"
+    "build:apk": "npm run cap:sync && cd android && ./gradlew assembleRelease",
+    "build:apk:debug": "npm run cap:sync && cd android && ./gradlew assembleDebug",
+    "install:apk": "adb install -r android/app/build/outputs/apk/release/app-release.apk"
   },
   "dependencies": {
     "@capacitor/android": "^7.2.0",

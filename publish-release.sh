@@ -20,7 +20,7 @@ done
 
 if [[ ! -f "$APK" ]]; then
   echo "APK not found: $APK" >&2
-  echo "Build first: npm run build:apk && cp android/app/build/outputs/apk/debug/app-debug.apk ~/TuneFriend-v${VERSION}.apk" >&2
+  echo "Build first: npm run build:apk && cp android/app/build/outputs/apk/release/app-release.apk ~/TuneFriend-v${VERSION}.apk" >&2
   exit 1
 fi
 
