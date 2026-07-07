@@ -174,6 +174,7 @@ public class BackgroundMusicPlugin extends Plugin {
         ret.put("position", prepared ? MusicPlaybackService.getPositionMs() / 1000.0 : 0);
         ret.put("duration", prepared ? MusicPlaybackService.getDurationMs() / 1000.0 : 0);
         ret.put("playing", MusicPlaybackService.isCurrentlyPlaying());
+        ret.put("wantsPlaying", MusicPlaybackService.wantsToPlay());
         ret.put("trackId", MusicPlaybackService.getCurrentTrackId());
         call.resolve(ret);
     }

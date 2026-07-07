@@ -282,20 +282,26 @@ export class Player {
       this._nativePosition = status.position || 0;
       if (status.duration > 0) this._duration = status.duration;
       this._nativePlaying = !!status.playing;
-      if (!status.prepared && !status.playing && this.current && this._canAutoRecover()) {
-        await this._handleNativeError("Playback error");
+      const wantsPlayback = status.wantsPlaying || session?.wasPlaying;
+      if (!status.prepared && !status.playing && wantsPlayback && this.current && this._canAutoRecover()) {
+        await this._loadCurrent();
         return;
       }
       const shouldResume = status.prepared && !status.playing
-        && session?.wasPlaying
+        && wantsPlayback
         && this._canAutoRecover();
       if (shouldResume) {
         try {
           await nativeResume();
-          const after = await nativeGetStatus();
+          let after = await nativeGetStatus();
           this._nativePlaying = !!after.playing;
+          if (!after.playing) {
+            await this._loadCurrent();
+            after = await nativeGetStatus();
+            this._nativePlaying = !!after.playing;
+          }
         } catch {
-          // Service may have been stopped by the system.
+          if (this._canAutoRecover()) await this._loadCurrent();
         }
       }
       if (status.prepared || status.playing || this._nativePlaying) {

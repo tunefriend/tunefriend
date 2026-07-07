@@ -81,12 +81,18 @@ public class MusicPlaybackService extends Service {
     private boolean shouldResumeAfterFocus = false;
     private boolean hasAudioFocus = false;
     private boolean userPaused = false;
+    private boolean wantsToPlay = false;
+    private String currentUrl = "";
+    private int pendingSeekMs = 0;
     private long lastResumeAt = 0;
     private int errorSkipCount = 0;
+    private int reloadAttemptCount = 0;
 
     private static final long RESUME_WATCHDOG_MS = 30000;
+    private static final long PLAYBACK_HEALTH_MS = 30000;
     private static final long FOCUS_RESUME_DELAY_MS = 400;
     private final Runnable resumeWatchdog = this::runResumeWatchdog;
+    private final Runnable playbackHealthCheck = this::runPlaybackHealthCheck;
     private final Runnable deferredFocusResume = this::tryResumeAfterFocus;
 
     private static class TrackInfo {
@@ -184,6 +190,10 @@ public class MusicPlaybackService extends Service {
         return instance != null && instance.isPrepared;
     }
 
+    public static boolean wantsToPlay() {
+        return instance != null && instance.wantsToPlay;
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -203,6 +213,7 @@ public class MusicPlaybackService extends Service {
             @Override
             public void onPlay() {
                 userPaused = false;
+                wantsToPlay = true;
                 resume();
             }
 
@@ -270,6 +281,7 @@ public class MusicPlaybackService extends Service {
                 break;
             case ACTION_RESUME:
                 userPaused = false;
+                wantsToPlay = true;
                 resume();
                 break;
             case ACTION_STOP:
@@ -409,6 +421,7 @@ public class MusicPlaybackService extends Service {
     private void play(String url, String title, String artist, String artworkUrl, String trackId,
                       String nextUrl, String nextTitle, String nextArtist, String nextArtworkUrl, String nextTrackId) {
         if (url == null || url.isEmpty()) return;
+        currentUrl = url;
         currentTitle = title != null ? title : "TuneFriend";
         currentArtist = artist != null ? artist : "";
         currentArtworkUrl = artworkUrl != null ? artworkUrl : "";
@@ -417,6 +430,8 @@ public class MusicPlaybackService extends Service {
         isPaused = false;
         isPrepared = false;
         userPaused = false;
+        wantsToPlay = true;
+        reloadAttemptCount = 0;
         syncQueueIndexToCurrentTrack(currentTrackId);
         if (nextUrl != null && !nextUrl.isEmpty()) {
             setNextTrackInfo(nextUrl, nextTitle, nextArtist, nextArtworkUrl, nextTrackId);
@@ -451,12 +466,26 @@ public class MusicPlaybackService extends Service {
             mediaPlayer.setOnPreparedListener(mp -> {
                 isPrepared = true;
                 errorSkipCount = 0;
+                reloadAttemptCount = 0;
                 userPaused = false;
-                mp.start();
-                isPaused = false;
+                if (pendingSeekMs > 0) {
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            mp.seekTo((long) pendingSeekMs, MediaPlayer.SEEK_CLOSEST_SYNC);
+                        } else {
+                            mp.seekTo(pendingSeekMs);
+                        }
+                    } catch (Exception ignored) {}
+                    pendingSeekMs = 0;
+                }
+                if (wantsToPlay) {
+                    mp.start();
+                    isPaused = false;
+                }
                 cancelResumeWatchdog();
-                updatePlaybackState(true);
-                updateNotification(true);
+                schedulePlaybackHealthCheck();
+                updatePlaybackState(wantsToPlay && mp.isPlaying());
+                updateNotification(wantsToPlay && mp.isPlaying());
                 if (callback != null) callback.onPrepared();
             });
             mediaPlayer.setOnCompletionListener(mp -> {
@@ -468,7 +497,13 @@ public class MusicPlaybackService extends Service {
             mediaPlayer.setOnErrorListener((mp, what, extra) -> {
                 if (releasingPlayer) return true;
                 isPrepared = false;
+                int savedPos = getPositionMs();
                 releasePlayer();
+                if (wantsToPlay && reloadAttemptCount < 2 && currentUrl != null && !currentUrl.isEmpty()) {
+                    reloadAttemptCount++;
+                    reloadCurrentTrackAt(savedPos);
+                    return true;
+                }
                 if (errorSkipCount < 3 && advanceToNextTrack()) {
                     errorSkipCount++;
                     return true;
@@ -564,7 +599,7 @@ public class MusicPlaybackService extends Service {
         switch (focusChange) {
             case AudioManager.AUDIOFOCUS_LOSS:
                 if (!userPaused) {
-                    shouldResumeAfterFocus = isPlayingNow();
+                    shouldResumeAfterFocus = wantsToPlay && isPrepared;
                     pauseForInterruption();
                 }
                 hasAudioFocus = false;
@@ -574,7 +609,7 @@ public class MusicPlaybackService extends Service {
             case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
                 if (now - lastResumeAt < 1200) return;
                 if (!userPaused) {
-                    shouldResumeAfterFocus = isPlayingNow();
+                    shouldResumeAfterFocus = wantsToPlay && isPrepared;
                     pauseForInterruption();
                     scheduleResumeWatchdog();
                 }
@@ -598,19 +633,16 @@ public class MusicPlaybackService extends Service {
             shouldResumeAfterFocus = false;
             return;
         }
-        if (shouldResumeAfterFocus && isPaused && isPrepared) {
+        if (shouldResumeAfterFocus || (wantsToPlay && isPrepared && !isPlayingNow())) {
             if (!hasAudioFocus) requestAudioFocus();
             lastResumeAt = SystemClock.elapsedRealtime();
-            resume();
-            if (isPlayingNow()) {
-                cancelResumeWatchdog();
-            }
+            recoverPlayback();
         }
         shouldResumeAfterFocus = false;
     }
 
     private void scheduleResumeWatchdog() {
-        if (userPaused || !isPrepared) return;
+        if (userPaused || !wantsToPlay || !isPrepared) return;
         mainHandler.removeCallbacks(resumeWatchdog);
         mainHandler.postDelayed(resumeWatchdog, RESUME_WATCHDOG_MS);
     }
@@ -619,19 +651,81 @@ public class MusicPlaybackService extends Service {
         mainHandler.removeCallbacks(resumeWatchdog);
     }
 
+    private void schedulePlaybackHealthCheck() {
+        if (userPaused || !wantsToPlay) return;
+        mainHandler.removeCallbacks(playbackHealthCheck);
+        mainHandler.postDelayed(playbackHealthCheck, PLAYBACK_HEALTH_MS);
+    }
+
+    private void cancelPlaybackHealthCheck() {
+        mainHandler.removeCallbacks(playbackHealthCheck);
+    }
+
     private void runResumeWatchdog() {
-        if (userPaused || !isPrepared || !isPaused) {
+        if (userPaused || !wantsToPlay || !isPrepared) {
             cancelResumeWatchdog();
             return;
         }
-        if (!hasAudioFocus) requestAudioFocus();
-        lastResumeAt = SystemClock.elapsedRealtime();
-        resume();
+        if (!isPlayingNow()) {
+            if (!hasAudioFocus) requestAudioFocus();
+            lastResumeAt = SystemClock.elapsedRealtime();
+            recoverPlayback();
+        }
         if (isPlayingNow()) {
             cancelResumeWatchdog();
             return;
         }
         scheduleResumeWatchdog();
+    }
+
+    private void runPlaybackHealthCheck() {
+        if (userPaused || !wantsToPlay || !isPrepared) {
+            cancelPlaybackHealthCheck();
+            return;
+        }
+        if (!isPlayingNow()) {
+            recoverPlayback();
+        }
+        schedulePlaybackHealthCheck();
+    }
+
+    private void recoverPlayback() {
+        if (userPaused || !wantsToPlay || mediaPlayer == null || !isPrepared) return;
+        try {
+            if (isPaused || !isPlayingNow()) {
+                if (!hasAudioFocus) requestAudioFocus();
+                mediaPlayer.start();
+                isPaused = false;
+                lastResumeAt = SystemClock.elapsedRealtime();
+            }
+        } catch (Exception ignored) {}
+        if (isPlayingNow()) {
+            cancelResumeWatchdog();
+            updatePlaybackState(true);
+            updateNotification(true);
+            return;
+        }
+        if (reloadAttemptCount < 2 && currentUrl != null && !currentUrl.isEmpty()) {
+            reloadAttemptCount++;
+            reloadCurrentTrackAt(getPositionMs());
+        }
+    }
+
+    private void reloadCurrentTrackAt(int positionMs) {
+        if (currentUrl == null || currentUrl.isEmpty()) return;
+        pendingSeekMs = Math.max(0, positionMs);
+        play(
+            currentUrl,
+            currentTitle,
+            currentArtist,
+            currentArtworkUrl,
+            currentTrackId,
+            nextUrl,
+            nextTitle,
+            nextArtist,
+            nextArtworkUrl,
+            nextTrackId
+        );
     }
 
     private void pauseForInterruption() {
@@ -649,27 +743,28 @@ public class MusicPlaybackService extends Service {
 
     private void pauseFromUser() {
         userPaused = true;
+        wantsToPlay = false;
         shouldResumeAfterFocus = false;
         cancelResumeWatchdog();
+        cancelPlaybackHealthCheck();
         pauseForInterruption();
     }
 
     private void resume() {
-        if (mediaPlayer != null && isPaused) {
-            userPaused = false;
-            mediaPlayer.start();
-            isPaused = false;
-            lastResumeAt = SystemClock.elapsedRealtime();
-            cancelResumeWatchdog();
-            updatePlaybackState(true);
-            updateNotification(true);
+        if (mediaPlayer == null || userPaused) return;
+        userPaused = false;
+        wantsToPlay = true;
+        if (isPrepared) {
+            recoverPlayback();
         }
     }
 
     private void stopPlayback() {
         userPaused = true;
+        wantsToPlay = false;
         shouldResumeAfterFocus = false;
         cancelResumeWatchdog();
+        cancelPlaybackHealthCheck();
         mainHandler.removeCallbacks(deferredFocusResume);
         releasePlayer();
         abandonAudioFocus();
@@ -837,6 +932,7 @@ public class MusicPlaybackService extends Service {
     public void onDestroy() {
         if (instance == this) instance = null;
         cancelResumeWatchdog();
+        cancelPlaybackHealthCheck();
         mainHandler.removeCallbacks(deferredFocusResume);
         releasePlayer();
         abandonAudioFocus();
