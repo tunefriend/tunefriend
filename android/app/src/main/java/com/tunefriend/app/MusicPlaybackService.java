@@ -649,21 +649,26 @@ public class MusicPlaybackService extends Service {
         long now = SystemClock.elapsedRealtime();
         switch (focusChange) {
             case AudioManager.AUDIOFOCUS_LOSS:
+                // Call, another music app, etc. — stay paused until system grants focus again.
                 if (!userPaused) {
                     shouldResumeAfterFocus = wantsToPlay && isPrepared;
                     pauseForInterruption();
                 }
                 hasAudioFocus = false;
-                scheduleResumeWatchdog();
+                cancelResumeWatchdog();
+                cancelPlaybackHealthCheck();
                 break;
             case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
             case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
+                // Reels / short video / notification — do NOT re-steal focus on a timer.
                 if (now - lastResumeAt < 1200) return;
+                hasAudioFocus = false;
                 if (!userPaused) {
                     shouldResumeAfterFocus = wantsToPlay && isPrepared;
                     pauseForInterruption();
-                    scheduleResumeWatchdog();
                 }
+                cancelResumeWatchdog();
+                cancelPlaybackHealthCheck();
                 break;
             case AudioManager.AUDIOFOCUS_GAIN:
                 hasAudioFocus = true;
@@ -684,16 +689,22 @@ public class MusicPlaybackService extends Service {
             shouldResumeAfterFocus = false;
             return;
         }
+        // Only resume when the system gave focus back (calls / Reels ended).
+        if (!hasAudioFocus) {
+            shouldResumeAfterFocus = shouldResumeAfterFocus || wantsToPlay;
+            return;
+        }
         if (shouldResumeAfterFocus || (wantsToPlay && isPrepared && !isPlayingNow())) {
-            if (!hasAudioFocus) requestAudioFocus();
             lastResumeAt = SystemClock.elapsedRealtime();
             recoverPlayback();
+            if (isPlayingNow()) schedulePlaybackHealthCheck();
         }
         shouldResumeAfterFocus = false;
     }
 
     private void scheduleResumeWatchdog() {
-        if (userPaused || !wantsToPlay || !isPrepared) return;
+        // Watchdog only heals silent stalls while we still hold audio focus.
+        if (userPaused || !wantsToPlay || !isPrepared || !hasAudioFocus) return;
         mainHandler.removeCallbacks(resumeWatchdog);
         mainHandler.postDelayed(resumeWatchdog, RESUME_WATCHDOG_MS);
     }
@@ -703,7 +714,7 @@ public class MusicPlaybackService extends Service {
     }
 
     private void schedulePlaybackHealthCheck() {
-        if (userPaused || !wantsToPlay) return;
+        if (userPaused || !wantsToPlay || !hasAudioFocus) return;
         mainHandler.removeCallbacks(playbackHealthCheck);
         mainHandler.postDelayed(playbackHealthCheck, PLAYBACK_HEALTH_MS);
     }
@@ -717,8 +728,12 @@ public class MusicPlaybackService extends Service {
             cancelResumeWatchdog();
             return;
         }
+        // Never steal focus from a call, Reels, Maps, etc.
+        if (!hasAudioFocus) {
+            cancelResumeWatchdog();
+            return;
+        }
         if (!isPlayingNow()) {
-            if (!hasAudioFocus) requestAudioFocus();
             lastResumeAt = SystemClock.elapsedRealtime();
             recoverPlayback();
         }
@@ -734,6 +749,10 @@ public class MusicPlaybackService extends Service {
             cancelPlaybackHealthCheck();
             return;
         }
+        if (!hasAudioFocus) {
+            cancelPlaybackHealthCheck();
+            return;
+        }
         if (!isPlayingNow()) {
             recoverPlayback();
         }
@@ -742,10 +761,11 @@ public class MusicPlaybackService extends Service {
 
     private void recoverPlayback() {
         if (userPaused || !wantsToPlay) return;
+        // Do not start audio while another app owns focus (calls, IG/FB/TT video).
+        if (!hasAudioFocus) return;
         if (mediaPlayer != null && isPrepared) {
             try {
                 if (isPaused || !isPlayingNow()) {
-                    if (!hasAudioFocus) requestAudioFocus();
                     mediaPlayer.start();
                     isPaused = false;
                     lastResumeAt = SystemClock.elapsedRealtime();
