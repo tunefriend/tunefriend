@@ -10,15 +10,25 @@
 
 package com.tunefriend.app;
 
+import android.Manifest;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.view.WindowManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import androidx.activity.OnBackPressedCallback;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+    private static final int REQ_POST_NOTIFICATIONS = 4401;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BackgroundMusicPlugin.class);
@@ -42,12 +52,44 @@ public class MainActivity extends BridgeActivity {
                 dispatchBackToWeb();
             }
         });
+
+        ensurePlaybackPermissions();
     }
 
     @Override
     public void onStart() {
         super.onStart();
         configureWebView();
+    }
+
+    /**
+     * Overnight play needs a visible media notification + battery exemption.
+     * GrapheneOS / stock Android often default these off for new installs.
+     */
+    private void ensurePlaybackPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    new String[]{ Manifest.permission.POST_NOTIFICATIONS },
+                    REQ_POST_NOTIFICATIONS
+                );
+            }
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                try {
+                    Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                } catch (Exception ignored) {
+                    // User can still set Unrestricted manually in App info → Battery
+                }
+            }
+        }
     }
 
     private void configureWebView() {
