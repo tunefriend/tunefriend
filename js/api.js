@@ -242,9 +242,10 @@ export class SubsonicAPI {
   }
 
   /**
-   * Full album list — merges album list, search3, artists, and by-year scans.
+   * Full album list — fast path: albumList2 + search3 (Symfonium-style).
+   * Pass deep:true for artist/year scans when a server under-reports.
    */
-  async getAllAlbums(type = "alphabeticalByName", { onProgress } = {}) {
+  async getAllAlbums(type = "alphabeticalByName", { onProgress, deep = false } = {}) {
     const albumMap = new Map();
 
     const size = 500;
@@ -259,21 +260,23 @@ export class SubsonicAPI {
 
     await this.paginateSearchAlbums(albumMap, { onProgress });
 
-    const artists = await this.getArtists();
-    const batchSize = 8;
-    for (let i = 0; i < artists.length; i += batchSize) {
-      const batch = artists.slice(i, i + batchSize);
-      const results = await Promise.allSettled(batch.map((a) => this.getArtist(a.id)));
-      for (const r of results) {
-        if (r.status !== "fulfilled") continue;
-        for (const al of r.value.albums) {
-          if (!albumMap.has(al.id)) albumMap.set(al.id, mapAlbum(al));
+    if (deep) {
+      const artists = await this.getArtists();
+      const batchSize = 12;
+      for (let i = 0; i < artists.length; i += batchSize) {
+        const batch = artists.slice(i, i + batchSize);
+        const results = await Promise.allSettled(batch.map((a) => this.getArtist(a.id)));
+        for (const r of results) {
+          if (r.status !== "fulfilled") continue;
+          for (const al of r.value.albums) {
+            if (!albumMap.has(al.id)) albumMap.set(al.id, mapAlbum(al));
+          }
         }
+        onProgress?.(albumMap.size);
       }
-      onProgress?.(albumMap.size);
-    }
 
-    await this.scanAlbumsByYear(albumMap, { onProgress });
+      await this.scanAlbumsByYear(albumMap, { onProgress });
+    }
 
     const albums = [...albumMap.values()];
     albums.sort((a, b) => a.name.localeCompare(b.name));
@@ -331,7 +334,7 @@ export class SubsonicAPI {
   async getAllSongsFromAlbums(albumList, { onProgress } = {}) {
     const songs = [];
     const seen = new Set();
-    const batchSize = 4;
+    const batchSize = 10;
     const total = albumList.length;
     let failed = 0;
 
@@ -358,15 +361,18 @@ export class SubsonicAPI {
   }
 
   /**
-   * Load all songs — search3 pagination (Symfonium) merged with per-album walk.
+   * Load all songs — prefer search3 pagination (fast, Symfonium-style).
+   * Falls back to per-album walk only when search under-delivers.
    */
-  async getAllSongs({ albums = null, onProgress } = {}) {
+  async getAllSongs({ albums = null, onProgress, forceAlbumWalk = false } = {}) {
     let albumList = albums;
     if (!albumList?.length) {
       albumList = await this.getAllAlbums("alphabeticalByName", {
         onProgress: (n) => onProgress?.(0, n, "scan"),
       });
     }
+
+    const expectedSongs = albumList.reduce((n, a) => n + (a.songCount || 0), 0);
 
     let viaSearch = [];
     try {
@@ -377,8 +383,18 @@ export class SubsonicAPI {
       /* search3 may be unavailable on older Navidrome */
     }
 
+    const searchLooksComplete =
+      viaSearch.length > 0 &&
+      (expectedSongs === 0
+        ? viaSearch.length >= 200
+        : viaSearch.length >= expectedSongs * 0.9 || viaSearch.length >= expectedSongs - 50);
+
+    if (!forceAlbumWalk && searchLooksComplete) {
+      return viaSearch;
+    }
+
     let viaAlbums = [];
-    if (albumList.length) {
+    if (albumList.length && (forceAlbumWalk || viaSearch.length < Math.max(100, expectedSongs * 0.5))) {
       const result = await this.getAllSongsFromAlbums(albumList, { onProgress });
       viaAlbums = result.songs;
     }
@@ -447,6 +463,7 @@ function mapSong(s) {
     duration: s.duration,
     track: s.track,
     year: s.year,
+    genre: s.genre || "",
   };
 }
 

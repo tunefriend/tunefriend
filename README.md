@@ -2,19 +2,23 @@
 
 Stream music from a friend's self-hosted Subsonic server (Navidrome, Airsonic, Gonic, etc.) on Android.
 
-**Latest release:** [v2.17](https://github.com/tunefriend/tunefriend/releases/latest)
+**Latest release:** [v2.25](https://github.com/tunefriend/tunefriend/releases/latest)
+
+**F-Droid:** [com.tunefriend.app](https://f-droid.org/en/packages/com.tunefriend.app/)
 
 ## Install
 
-1. Download **[TuneFriend-v2.17.apk](https://github.com/tunefriend/tunefriend/releases/latest)** from Releases
+1. Prefer **[F-Droid](https://f-droid.org/en/packages/com.tunefriend.app/)** for automatic updates, or download the APK from [GitHub Releases](https://github.com/tunefriend/tunefriend/releases/latest)
 2. Install on Android (allow installs from unknown sources if prompted)
 3. Enter your friend's server URL, username, and password
-4. Optional: **Settings → Sync Library** for the full album list
+4. **Settings → Sync Library** once (Wi‑Fi recommended for first sync) — then Songs, Albums, Genres, and Shuffle All use your full library
+
+> **Note:** GitHub and F-Droid builds are **release-signed**. If you previously installed an old **debug** APK, uninstall it first, then install the release build.
 
 ## Share with friends
 
-- **Right now:** Send them the [latest release](https://github.com/tunefriend/tunefriend/releases/latest)
-- **Coming soon:** [F-Droid listing](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/41558) (pending review)
+- Send them the [latest release](https://github.com/tunefriend/tunefriend/releases/latest), or
+- Point them at the [F-Droid listing](https://f-droid.org/en/packages/com.tunefriend.app/)
 
 ## Contact
 
@@ -31,10 +35,11 @@ They do **not** need your computer running — only your music server.
 
 ## Features
 
-- Browse **Home**, **Songs**, **Albums**, and **Search**
-- **Shuffle All** and favorites
-- **Background playback** with lock screen controls
-- **Settings** in the bottom bar — server, quality, sync library
+- Browse **Home**, **Songs**, **Albums**, **Genres** (and decades), and **Search**
+- **Shuffle All** with artist-aware diversity for large libraries
+- **Favorites** and **Settings** in the top bar
+- **Background playback** with lock screen / notification controls
+- Library sync for 50k+ song collections (search3 fast path)
 
 ## Build from source
 
@@ -47,7 +52,11 @@ npm install
 npm run build:apk
 ```
 
-APK output: `android/app/build/outputs/apk/debug/app-debug.apk`
+Release APK (with `android/keystore.properties` configured):
+
+`android/app/build/outputs/apk/release/app-release.apk`
+
+Debug APK: `npm run build:apk:debug`
 
 ## License
 

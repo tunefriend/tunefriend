@@ -37,13 +37,88 @@ let api = null;
 let currentTab = "home";
 let tabRenderGen = 0;
 
+/** Drill-down stack so Search → Artist → Album back returns correctly. */
+let contentStack = [];
+let lastSearchQuery = "";
+let lastSearchData = null;
+
 function isTabStale(gen, tab) {
   return gen !== tabRenderGen || currentTab !== tab;
 }
 
 const LIST_CHUNK = 100;
 const ALBUM_CHUNK = 60;
-const TAB_TITLES = { home: "Home", songs: "Songs", albums: "Albums" };
+const TAB_TITLES = { home: "Home", songs: "Songs", albums: "Albums", genres: "Genres" };
+
+const GENRE_PRESETS = [
+  { id: "rock", label: "Rock", patterns: ["rock"], exclude: ["alt", "alternative", "punk"] },
+  { id: "pop", label: "Pop", patterns: ["pop"] },
+  { id: "rap", label: "Rap / Hip-Hop", patterns: ["rap", "hip hop", "hip-hop", "hiphop", "trap"] },
+  { id: "country", label: "Country", patterns: ["country"] },
+  { id: "alt-rock", label: "Alt Rock", patterns: ["alt rock", "alternative rock", "alternative", "alt."] },
+];
+
+const DECADES = [1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020];
+
+function pushContentFrame(frame) {
+  contentStack.push(frame);
+  backNav.setNavDepth(frame.depth || "drill");
+}
+
+function clearContentStack() {
+  contentStack = [];
+}
+
+function songMatchesGenre(song, preset) {
+  const g = String(song.genre || "").toLowerCase();
+  if (!g) return false;
+  const matched = preset.patterns.some((p) => g.includes(p));
+  if (!matched) return false;
+  // Keep "Rock" separate from Alt Rock / Punk tags
+  if (preset.exclude?.some((x) => g.includes(x))) return false;
+  return true;
+}
+
+function songsForGenre(songs, preset) {
+  return songs.filter((s) => songMatchesGenre(s, preset));
+}
+
+function songsForDecade(songs, decadeStart) {
+  return songs.filter((s) => {
+    const y = Number(s.year);
+    return y >= decadeStart && y <= decadeStart + 9;
+  });
+}
+
+/**
+ * Cap per-artist so huge discographies don't flood Shuffle All (50k library).
+ */
+function sampleDiverseSongs(songs, max = 900) {
+  if (!songs?.length) return [];
+  if (songs.length <= max) return songs;
+
+  const byArtist = new Map();
+  for (const s of songs) {
+    const key = String(s.artist || s.artistId || "unknown").trim().toLowerCase();
+    if (!byArtist.has(key)) byArtist.set(key, []);
+    byArtist.get(key).push(s);
+  }
+
+  const maxPerArtist = Math.max(2, Math.min(6, Math.ceil(max / Math.max(byArtist.size, 1)) + 1));
+  const pool = [];
+  for (const list of byArtist.values()) {
+    for (let i = list.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [list[i], list[j]] = [list[j], list[i]];
+    }
+    pool.push(...list.slice(0, Math.min(list.length, maxPerArtist)));
+  }
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, max);
+}
 
 function nextFrame() {
   return new Promise((r) => requestAnimationFrame(r));
@@ -268,7 +343,11 @@ function setupContentDelegation(container) {
     }
     const albumBtn = e.target.closest("[data-album]");
     if (albumBtn) {
-      openAlbum(albumBtn.dataset.album, { fromScreen: container._albumFromScreen });
+      if (currentTab === "search") ensureSearchOnStack();
+      openAlbum(albumBtn.dataset.album, {
+        fromScreen: container._albumFromScreen,
+        skipPush: !!container._albumFromScreen,
+      });
       return;
     }
     const songItem = e.target.closest("[data-song-idx]");
@@ -284,7 +363,13 @@ function attachAlbumClicks(container, fromScreen) {
   if (fromScreen) container._albumFromScreen = fromScreen;
   if ((container._listAlbums?.length || 0) > 30) return;
   container.querySelectorAll("[data-album]").forEach((el) => {
-    el.addEventListener("click", () => openAlbum(el.dataset.album, { fromScreen: container._albumFromScreen }));
+    el.addEventListener("click", () => {
+      if (currentTab === "search") ensureSearchOnStack();
+      openAlbum(el.dataset.album, {
+        fromScreen: container._albumFromScreen,
+        skipPush: !!container._albumFromScreen,
+      });
+    });
   });
 }
 
@@ -383,18 +468,71 @@ player.onTrackChange = (song) => {
   updatePlayingFavorite(song);
 };
 
-function popMainToRoot() {
+function captureSearchFrame() {
+  return {
+    depth: "search",
+    restore: () => {
+      currentTab = "search";
+      document.querySelectorAll(".nav-item").forEach((n) => {
+        n.classList.toggle("active", n.dataset.tab === "home");
+      });
+      renderSearch({ restoreQuery: lastSearchQuery, restoreData: lastSearchData });
+      backNav.setNavDepth("search");
+      backNav.updateMainBackButton?.();
+    },
+  };
+}
+
+function captureArtistFrame(id, name) {
+  return {
+    depth: "artist",
+    restore: () => openArtist(id, name, { skipPush: true }),
+  };
+}
+
+function captureGenreListFrame() {
+  return {
+    depth: "genres",
+    restore: () => {
+      currentTab = "genres";
+      document.querySelectorAll(".nav-item").forEach((n) => {
+        n.classList.toggle("active", n.dataset.tab === "genres");
+      });
+      renderGenres();
+      backNav.setNavDepth("root");
+      backNav.updateMainBackButton?.();
+    },
+  };
+}
+
+function ensureSearchOnStack() {
+  if (currentTab !== "search") return;
+  if (contentStack.some((f) => f.depth === "search")) return;
+  pushContentFrame(captureSearchFrame());
+}
+
+function popMainContent() {
   const returnTo = backNav.consumeReturnScreen();
-  backNav.setNavDepth("root");
   if (returnTo) {
+    clearContentStack();
+    backNav.setNavDepth("root");
     showScreen(returnTo);
     return;
   }
+
+  const prev = contentStack.pop();
+  if (prev?.restore) {
+    prev.restore();
+    return;
+  }
+
+  backNav.setNavDepth("root");
   if (currentTab === "search") {
-    switchTab(backNav.getLastMainTab() || "home");
+    switchTab(backNav.getLastMainTab() || "home", { fromBack: true });
     return;
   }
   tabRenderers[currentTab]?.();
+  backNav.updateMainBackButton?.();
 }
 
 const backNav = createBackNav({
@@ -404,16 +542,18 @@ const backNav = createBackNav({
   onBackFromFavorites: () => showScreen("screen-main"),
   onBackFromSettings: (tab) => {
     showScreen("screen-main");
-    switchTab(tab || "home", { fromBack: true });
+    if (tab && tab !== "settings") switchTab(tab, { fromBack: true });
   },
-  onBackFromMainDrillDown: () => popMainToRoot(),
+  onBackFromMainDrillDown: () => popMainContent(),
   onBackToHome: () => switchTab("home", { fromBack: true }),
 });
 
-async function openAlbum(id, { fromScreen } = {}) {
+async function openAlbum(id, { fromScreen, skipPush = false } = {}) {
   if (fromScreen) {
     showScreen("screen-main");
     backNav.setReturnScreen(fromScreen);
+  } else if (!skipPush) {
+    ensureSearchOnStack();
   }
   backNav.setNavDepth("album");
   showLoading();
@@ -452,7 +592,8 @@ async function openAlbum(id, { fromScreen } = {}) {
   }
 }
 
-async function openArtist(id, name) {
+async function openArtist(id, name, { skipPush = false } = {}) {
+  if (!skipPush) ensureSearchOnStack();
   backNav.setNavDepth("artist");
   showLoading();
   els.pageTitle.textContent = name || "Artist";
@@ -462,8 +603,13 @@ async function openArtist(id, name) {
       <div class="section-title">${escapeHtml(artist.name)}</div>
       ${renderAlbumGrid(artist.albums)}
     `;
-    attachAlbumClicks(els.content);
     attachFavoriteHandlers(els.content, [], artist.albums);
+    els.content.querySelectorAll("[data-album]").forEach((el) => {
+      el.addEventListener("click", () => {
+        pushContentFrame(captureArtistFrame(id, artist.name));
+        openAlbum(el.dataset.album, { skipPush: true });
+      });
+    });
   } catch (e) {
     showError(e.message);
   }
@@ -553,12 +699,14 @@ function attachArtistClicks(container) {
 }
 
 function openSearch() {
+  clearContentStack();
   backNav.setNavDepth("search");
   currentTab = "search";
   document.querySelectorAll(".nav-item").forEach((n) => {
     n.classList.toggle("active", n.dataset.tab === "home");
   });
   renderSearch();
+  backNav.updateMainBackButton?.();
 }
 
 async function displaySongsList(songs, cache, gen) {
@@ -588,7 +736,8 @@ async function displaySongsList(songs, cache, gen) {
     player.playAll(songsWithUrls(songs));
   });
   els.content.querySelector("#btn-shuffle-all-songs")?.addEventListener("click", () => {
-    player.playShuffled(songsWithUrls(songs));
+    const pool = sampleDiverseSongs(songs, 900);
+    player.playShuffled(songsWithUrls(pool));
   });
   const listEl = document.getElementById("active-song-list");
   if (songs.length > LIST_CHUNK) {
@@ -639,7 +788,33 @@ async function renderSongs() {
   }
 }
 
-function renderSearch() {
+function paintSearchResults(resultsEl, data) {
+  let html = "";
+  if (data.artists.length) {
+    html += '<div class="section-title">Artists</div><ul class="artist-list">';
+    html += data.artists.map((a) => `
+      <li class="artist-item" data-artist="${a.id}">
+        <div class="artist-avatar"><svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></div>
+        <span class="artist-name">${escapeHtml(a.name)}</span>
+      </li>
+    `).join("");
+    html += "</ul>";
+  }
+  if (data.albums.length) {
+    html += '<div class="section-title">Albums</div>' + renderAlbumGrid(data.albums);
+  }
+  if (data.songs.length) {
+    html += '<div class="section-title">Songs</div>' + renderSongList(data.songs, true);
+  }
+  if (!html) html = '<div class="empty-state">No results</div>';
+  resultsEl.innerHTML = html;
+  attachArtistClicks(resultsEl);
+  attachAlbumClicks(resultsEl);
+  attachSongClicks(resultsEl, data.songs);
+  attachFavoriteHandlers(resultsEl, data.songs, data.albums);
+}
+
+function renderSearch({ restoreQuery = "", restoreData = null } = {}) {
   els.pageTitle.textContent = "Search";
   els.content.innerHTML = `
     <div class="search-box">
@@ -651,41 +826,32 @@ function renderSearch() {
   const results = document.getElementById("search-results");
   let timer;
 
-  input.focus();
+  if (restoreQuery) {
+    input.value = restoreQuery;
+    lastSearchQuery = restoreQuery;
+  }
+  if (restoreData) {
+    lastSearchData = restoreData;
+    paintSearchResults(results, restoreData);
+  } else {
+    input.focus();
+  }
+
   input.addEventListener("input", () => {
     clearTimeout(timer);
     const q = input.value.trim();
+    lastSearchQuery = q;
     if (q.length < 2) {
       results.innerHTML = "";
+      lastSearchData = null;
       return;
     }
     timer = setTimeout(async () => {
       results.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
       try {
         const data = await api.search(q);
-        let html = "";
-        if (data.artists.length) {
-          html += '<div class="section-title">Artists</div><ul class="artist-list">';
-          html += data.artists.map((a) => `
-            <li class="artist-item" data-artist="${a.id}">
-              <div class="artist-avatar"><svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></div>
-              <span class="artist-name">${escapeHtml(a.name)}</span>
-            </li>
-          `).join("");
-          html += "</ul>";
-        }
-        if (data.albums.length) {
-          html += '<div class="section-title">Albums</div>' + renderAlbumGrid(data.albums);
-        }
-        if (data.songs.length) {
-          html += '<div class="section-title">Songs</div>' + renderSongList(data.songs, true);
-        }
-        if (!html) html = '<div class="empty-state">No results</div>';
-        results.innerHTML = html;
-        attachArtistClicks(results);
-        attachAlbumClicks(results);
-        attachSongClicks(results, data.songs);
-        attachFavoriteHandlers(results, data.songs, data.albums);
+        lastSearchData = data;
+        paintSearchResults(results, data);
       } catch (e) {
         results.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`;
       }
@@ -693,17 +859,137 @@ function renderSearch() {
   });
 }
 
+function getCachedSongs() {
+  return loadLibraryCache()?.songs || [];
+}
+
+function openGenreSongs(title, songs) {
+  if (!songs.length) {
+    showToast("No songs in this category — try Sync Library");
+    return;
+  }
+  if (currentTab === "genres") {
+    pushContentFrame(captureGenreListFrame());
+  }
+  backNav.setNavDepth("genre");
+  els.pageTitle.textContent = title;
+  const sampleNote = songs.length > 900
+    ? `<p class="library-hint">${songs.length} songs · shuffle uses a diverse mix so one artist never dominates.</p>`
+    : `<p class="library-hint">${songs.length} songs</p>`;
+  els.content.innerHTML = `
+    ${sampleNote}
+    <div class="album-actions">
+      <button class="quick-btn primary" id="btn-play-genre">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        Play All
+      </button>
+      <button class="quick-btn secondary" id="btn-shuffle-genre">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+        Shuffle All
+      </button>
+    </div>
+    <ul class="song-list" id="active-song-list"></ul>
+  `;
+  const listSongs = songs.slice(0, 200);
+  bindListData(els.content, listSongs, []);
+  const listEl = document.getElementById("active-song-list");
+  listEl.innerHTML = listSongs.map((s, i) => renderSongItem(s, i, true)).join("");
+  if (songs.length > 200) {
+    listEl.insertAdjacentHTML("beforeend", `<li class="library-hint" style="padding:1rem;list-style:none">Showing first 200 — use Play All / Shuffle All for the full set (${songs.length}).</li>`);
+  }
+  els.content.querySelector("#btn-play-genre")?.addEventListener("click", () => {
+    const pool = sampleDiverseSongs(songs, 500);
+    player.playAll(songsWithUrls(pool));
+  });
+  els.content.querySelector("#btn-shuffle-genre")?.addEventListener("click", () => {
+    const pool = sampleDiverseSongs(songs, 900);
+    player.playShuffled(songsWithUrls(pool));
+  });
+  backNav.updateMainBackButton?.();
+}
+
+function renderGenres() {
+  els.pageTitle.textContent = "Genres";
+  const songs = getCachedSongs();
+  if (!songs.length) {
+    els.content.innerHTML = `
+      <div class="empty-state">
+        Sync your library first (Settings → Sync Library) to browse genres and decades.
+      </div>`;
+    return;
+  }
+
+  const genreCards = GENRE_PRESETS.map((g) => {
+    const count = songsForGenre(songs, g).length;
+    return `
+      <button type="button" class="genre-chip" data-genre="${g.id}">
+        <span class="genre-chip-name">${escapeHtml(g.label)}</span>
+        <span class="genre-chip-count">${count} songs</span>
+      </button>`;
+  }).join("");
+
+  const decadeCards = DECADES.map((d) => {
+    const count = songsForDecade(songs, d).length;
+    return `
+      <button type="button" class="genre-chip" data-decade="${d}">
+        <span class="genre-chip-name">${d}s</span>
+        <span class="genre-chip-count">${count} songs</span>
+      </button>`;
+  }).join("");
+
+  els.content.innerHTML = `
+    <p class="library-hint">From your synced library · tags come from the server (genre / year).</p>
+    <div class="section-title">Genres</div>
+    <div class="genre-grid">${genreCards}</div>
+    <div class="section-title">Decades</div>
+    <div class="genre-grid">${decadeCards}</div>
+  `;
+
+  els.content.querySelectorAll("[data-genre]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const preset = GENRE_PRESETS.find((g) => g.id === btn.dataset.genre);
+      if (!preset) return;
+      openGenreSongs(preset.label, songsForGenre(songs, preset));
+    });
+  });
+  els.content.querySelectorAll("[data-decade]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const d = parseInt(btn.dataset.decade, 10);
+      openGenreSongs(`${d}s`, songsForDecade(songs, d));
+    });
+  });
+}
+
 const tabRenderers = {
   home: renderHome,
   songs: renderSongs,
   albums: renderAlbums,
+  genres: renderGenres,
 };
 
 async function shuffleAll() {
   try {
-    const songs = await api.getRandomSongs(100);
-    if (!songs.length) return showToast("No songs found");
+    showToast("Building a diverse shuffle…");
+    const cache = loadLibraryCache();
+    let songs = [];
+    if (cache?.songs?.length) {
+      songs = sampleDiverseSongs(cache.songs, 900);
+    } else {
+      // Multiple server draws + diversify (single getRandomSongs(100) re-hears the same big catalogs)
+      const batches = await Promise.all([
+        api.getRandomSongs(200),
+        api.getRandomSongs(200),
+        api.getRandomSongs(200),
+      ]);
+      const merged = new Map();
+      for (const batch of batches) {
+        for (const s of batch) merged.set(s.id, s);
+      }
+      songs = sampleDiverseSongs([...merged.values()], 500);
+    }
+    if (!songs.length) return showToast("No songs found — try Sync Library first");
     await player.playShuffled(songsWithUrls(songs));
+    showToast(`Shuffling ${songs.length} songs · artist-spread`);
   } catch (e) {
     showToast(e.message);
   }
@@ -714,15 +1000,14 @@ function switchTab(tab, { fromBack = false } = {}) {
   const gen = tabRenderGen;
   if (!fromBack && tab !== "settings" && tab !== "search") backNav.rememberMainTab(tab);
   currentTab = tab;
+  clearContentStack();
+  lastSearchQuery = "";
+  lastSearchData = null;
   backNav.setNavDepth("root");
   backNav.updateMainBackButton?.();
   document.querySelectorAll(".nav-item").forEach((n) => {
     n.classList.toggle("active", n.dataset.tab === tab);
   });
-  if (tab === "settings") {
-    openSettings();
-    return;
-  }
   showScreen("screen-main");
   if (TAB_TITLES[tab]) els.pageTitle.textContent = TAB_TITLES[tab];
   if (tab === "songs" || tab === "albums") showLoading();
@@ -789,6 +1074,10 @@ function openSettings() {
   const cfg = loadConfig();
   const prefs = loadSettings();
 
+  if (currentTab && currentTab !== "search") {
+    backNav.rememberMainTab(currentTab);
+  }
+
   document.getElementById("settings-server").textContent = cfg?.serverUrl || "—";
   document.getElementById("settings-user").textContent = cfg?.username || "—";
   document.getElementById("edit-server-url").value = cfg?.serverUrl || "";
@@ -806,6 +1095,8 @@ function openSettings() {
 document.querySelectorAll(".nav-item").forEach((btn) => {
   btn.addEventListener("click", () => switchTab(btn.dataset.tab));
 });
+
+document.getElementById("btn-settings")?.addEventListener("click", openSettings);
 
 els.loginForm.addEventListener("submit", async (e) => {
   e.preventDefault();

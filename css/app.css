@@ -618,6 +618,84 @@ body {
 
 .search-box input:focus { border-color: var(--accent); }
 
+/* Genres / decades */
+.genre-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.genre-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.9rem 1rem;
+  background: var(--bg-card);
+  border: 1px solid #2a2a3a;
+  border-radius: var(--radius);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.genre-item:active {
+  opacity: 0.85;
+  transform: scale(0.99);
+}
+
+.genre-item-name {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.genre-item-meta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.genre-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  margin-bottom: 1.25rem;
+}
+
+.genre-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  padding: 1rem 0.85rem;
+  background: var(--bg-card);
+  border: 1px solid #2a2a3a;
+  border-radius: var(--radius);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-height: 72px;
+}
+
+.genre-chip:active {
+  border-color: var(--accent);
+}
+
+.genre-chip-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.genre-chip-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 /* Now playing bar */
 .now-playing {
   flex-shrink: 0;
@@ -719,35 +797,62 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 1.5rem;
-  gap: 0.75rem;
+  justify-content: flex-start;
+  padding: 1rem 1.5rem 1.5rem;
+  gap: 0.5rem;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .player-art {
-  width: min(80vw, 320px);
+  width: min(70vw, 280px);
+  max-height: min(40vh, 280px);
   aspect-ratio: 1;
   border-radius: 20px;
   object-fit: cover;
   background: var(--bg-card);
   box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
+  flex-shrink: 1;
 }
 
 #player-title {
-  font-size: 1.4rem;
+  font-size: 1.25rem;
   font-weight: 700;
   text-align: center;
+  max-width: 100%;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+  flex-shrink: 0;
 }
 
 #player-artist {
   color: var(--text-muted);
   font-size: 1rem;
+  max-width: 100%;
+  width: 100%;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .player-album {
   color: var(--text-muted);
   font-size: 0.85rem;
+  max-width: 100%;
+  width: 100%;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .progress-wrap {
@@ -756,9 +861,10 @@ body {
   gap: 0.5rem;
   width: 100%;
   max-width: 400px;
-  margin-top: 1.5rem;
+  margin-top: auto;
   font-size: 0.75rem;
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 .progress-wrap input[type="range"] {
@@ -773,8 +879,11 @@ body {
 .player-controls {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 1.25rem;
-  margin-top: 1.5rem;
+  margin-top: 1rem;
+  flex-shrink: 0;
+  width: 100%;
 }
 
 .play-btn {

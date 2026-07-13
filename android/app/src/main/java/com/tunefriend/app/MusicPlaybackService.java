@@ -108,6 +108,10 @@ public class MusicPlaybackService extends Service {
     private boolean queueShuffle = false;
     private boolean queueRepeat = false;
     private final Random random = new Random();
+    private final ArrayList<String> recentArtists = new ArrayList<>();
+    private final ArrayList<String> recentTrackIds = new ArrayList<>();
+    private static final int RECENT_ARTIST_COOLDOWN = 10;
+    private static final int RECENT_TRACK_MEMORY = 60;
 
     public interface PlaybackCallback {
         void onPrepared();
@@ -364,17 +368,63 @@ public class MusicPlaybackService extends Service {
         }
     }
 
+    private String artistKey(TrackInfo t) {
+        if (t == null || t.artist == null) return "unknown";
+        return t.artist.trim().toLowerCase();
+    }
+
+    private void rememberPlayed(TrackInfo t) {
+        if (t == null) return;
+        if (t.trackId != null && !t.trackId.isEmpty()) {
+            recentTrackIds.add(t.trackId);
+            while (recentTrackIds.size() > RECENT_TRACK_MEMORY) recentTrackIds.remove(0);
+        }
+        String a = artistKey(t);
+        recentArtists.add(a);
+        while (recentArtists.size() > RECENT_ARTIST_COOLDOWN) recentArtists.remove(0);
+    }
+
     private int computeNextQueueIndex() {
         if (playQueue.isEmpty()) return -1;
         if (queueShuffle) {
             if (playQueue.size() == 1) return queueRepeat ? 0 : -1;
-            int idx;
-            int guard = 0;
-            do {
-                idx = random.nextInt(playQueue.size());
-                guard++;
-            } while (idx == queueIndex && playQueue.size() > 1 && guard < 12);
-            return idx;
+            String currentArtist = queueIndex >= 0 && queueIndex < playQueue.size()
+                ? artistKey(playQueue.get(queueIndex)) : "";
+
+            ArrayList<Integer> preferred = new ArrayList<>();
+            ArrayList<Integer> ok = new ArrayList<>();
+            ArrayList<Integer> fallback = new ArrayList<>();
+
+            for (int i = 0; i < playQueue.size(); i++) {
+                if (i == queueIndex) continue;
+                TrackInfo t = playQueue.get(i);
+                if (t.trackId != null && !t.trackId.isEmpty() && recentTrackIds.contains(t.trackId)) {
+                    continue;
+                }
+                String a = artistKey(t);
+                if (!a.equals(currentArtist) && !recentArtists.contains(a)) {
+                    preferred.add(i);
+                } else if (!a.equals(currentArtist)) {
+                    ok.add(i);
+                } else {
+                    fallback.add(i);
+                }
+            }
+
+            ArrayList<Integer> pool = !preferred.isEmpty() ? preferred
+                : !ok.isEmpty() ? ok
+                : !fallback.isEmpty() ? fallback
+                : null;
+            if (pool == null || pool.isEmpty()) {
+                int idx;
+                int guard = 0;
+                do {
+                    idx = random.nextInt(playQueue.size());
+                    guard++;
+                } while (idx == queueIndex && playQueue.size() > 1 && guard < 12);
+                return idx;
+            }
+            return pool.get(random.nextInt(pool.size()));
         }
         if (queueIndex < playQueue.size() - 1) return queueIndex + 1;
         if (queueRepeat) return 0;
@@ -396,6 +446,7 @@ public class MusicPlaybackService extends Service {
         if (nextIdx >= 0 && !playQueue.isEmpty()) {
             TrackInfo track = playQueue.get(nextIdx);
             queueIndex = nextIdx;
+            rememberPlayed(track);
             setNextTrackInfo(null, "", "", "", "");
             play(track.url, track.title, track.artist, track.artworkUrl, track.trackId,
                 null, "", "", "", "");
@@ -690,24 +741,32 @@ public class MusicPlaybackService extends Service {
     }
 
     private void recoverPlayback() {
-        if (userPaused || !wantsToPlay || mediaPlayer == null || !isPrepared) return;
-        try {
-            if (isPaused || !isPlayingNow()) {
-                if (!hasAudioFocus) requestAudioFocus();
-                mediaPlayer.start();
-                isPaused = false;
-                lastResumeAt = SystemClock.elapsedRealtime();
+        if (userPaused || !wantsToPlay) return;
+        if (mediaPlayer != null && isPrepared) {
+            try {
+                if (isPaused || !isPlayingNow()) {
+                    if (!hasAudioFocus) requestAudioFocus();
+                    mediaPlayer.start();
+                    isPaused = false;
+                    lastResumeAt = SystemClock.elapsedRealtime();
+                }
+            } catch (Exception ignored) {}
+            if (isPlayingNow()) {
+                cancelResumeWatchdog();
+                updatePlaybackState(true);
+                updateNotification(true);
+                return;
             }
-        } catch (Exception ignored) {}
-        if (isPlayingNow()) {
-            cancelResumeWatchdog();
-            updatePlaybackState(true);
-            updateNotification(true);
-            return;
         }
         if (reloadAttemptCount < 2 && currentUrl != null && !currentUrl.isEmpty()) {
             reloadAttemptCount++;
             reloadCurrentTrackAt(getPositionMs());
+            return;
+        }
+        // Stream likely dead (expired URL / network) — skip forward so a long session keeps going.
+        reloadAttemptCount = 0;
+        if (advanceToNextTrack()) {
+            errorSkipCount++;
         }
     }
 
@@ -864,7 +923,9 @@ public class MusicPlaybackService extends Service {
 
     private Notification buildNotification(boolean playing) {
         Intent openIntent = new Intent(this, MainActivity.class);
-        openIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        // Bring existing task forward without showing over the lock screen.
+        openIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP
+            | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
         PendingIntent openPi = PendingIntent.getActivity(
             this, 0, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE

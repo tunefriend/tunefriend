@@ -133,7 +133,9 @@ export class Player {
   }
 
   _nativeQueueOptions() {
-    const slice = this.queue.slice(this.index, this.index + 40).map((s) => this._freshSong(s));
+    // Larger window so background advances keep going when the WebView is frozen.
+    // Fresh auth tokens on every hand-off reduce "stops after a run of songs".
+    const slice = this.queue.slice(this.index, this.index + 120).map((s) => this._freshSong(s));
     return {
       queue: slice,
       index: 0,
@@ -188,28 +190,99 @@ export class Player {
     }
   }
 
-  _shuffleCopy(songs) {
-    const copy = [...songs];
-    for (let i = copy.length - 1; i > 0; i--) {
+  _artistKey(song) {
+    return String(song?.artist || song?.artistId || "unknown").trim().toLowerCase();
+  }
+
+  /** Fisher–Yates */
+  _shuffleInPlace(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [copy[i], copy[j]] = [copy[j], copy[i]];
+      [arr[i], arr[j]] = [arr[j], arr[i]];
     }
-    return copy;
+    return arr;
+  }
+
+  /**
+   * Artist-aware shuffle: spreads artists so huge catalogs (Elvis, Cash, etc.)
+   * don't dominate consecutive plays in a 50k+ library.
+   */
+  _shuffleCopy(songs) {
+    if (!songs?.length) return [];
+    if (songs.length <= 2) return this._shuffleInPlace([...songs]);
+
+    const byArtist = new Map();
+    for (const s of songs) {
+      const key = this._artistKey(s);
+      if (!byArtist.has(key)) byArtist.set(key, []);
+      byArtist.get(key).push(s);
+    }
+    for (const list of byArtist.values()) this._shuffleInPlace(list);
+
+    const artistKeys = this._shuffleInPlace([...byArtist.keys()]);
+    const result = [];
+    const recentArtists = [];
+    const cooldown = Math.min(12, Math.max(3, Math.floor(artistKeys.length / 4)));
+
+    while (result.length < songs.length) {
+      const withSongs = artistKeys.filter((k) => byArtist.get(k).length > 0);
+      if (!withSongs.length) break;
+      let pool = withSongs.filter((k) => !recentArtists.includes(k));
+      if (!pool.length) pool = withSongs;
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      result.push(byArtist.get(pick).pop());
+      recentArtists.push(pick);
+      if (recentArtists.length > cooldown) recentArtists.shift();
+    }
+    return result;
   }
 
   _computeNextIndex() {
     if (this.queue.length === 0) return -1;
     if (this.shuffle) {
-      if (this.queue.length === 1) return -1;
-      let idx;
-      do {
-        idx = Math.floor(Math.random() * this.queue.length);
-      } while (idx === this.index);
+      if (this.queue.length === 1) return this.repeat ? 0 : -1;
+      const recentIds = new Set(
+        (this._recentTrackIds || []).map(String)
+      );
+      const recentArtists = new Set(this._recentArtists || []);
+      const currentArtist = this._artistKey(this.current);
+
+      const candidates = [];
+      for (let i = 0; i < this.queue.length; i++) {
+        if (i === this.index) continue;
+        const s = this.queue[i];
+        if (recentIds.has(String(s.id))) continue;
+        candidates.push(i);
+      }
+      const pool = candidates.length ? candidates : [...Array(this.queue.length).keys()].filter((i) => i !== this.index);
+
+      let preferred = pool.filter((i) => {
+        const a = this._artistKey(this.queue[i]);
+        return a !== currentArtist && !recentArtists.has(a);
+      });
+      if (!preferred.length) {
+        preferred = pool.filter((i) => this._artistKey(this.queue[i]) !== currentArtist);
+      }
+      if (!preferred.length) preferred = pool;
+
+      const idx = preferred[Math.floor(Math.random() * preferred.length)];
+      this._rememberPlay(this.queue[idx]);
       return idx;
     }
     if (this.index < this.queue.length - 1) return this.index + 1;
     if (this.repeat) return 0;
     return -1;
+  }
+
+  _rememberPlay(song) {
+    if (!song) return;
+    if (!this._recentTrackIds) this._recentTrackIds = [];
+    if (!this._recentArtists) this._recentArtists = [];
+    this._recentTrackIds.push(String(song.id));
+    if (this._recentTrackIds.length > 80) this._recentTrackIds.shift();
+    const a = this._artistKey(song);
+    this._recentArtists.push(a);
+    if (this._recentArtists.length > 15) this._recentArtists.shift();
   }
 
   _advanceIndex() {
@@ -257,8 +330,10 @@ export class Player {
     this._nativePlaying = true;
     this._errorTrackId = "";
     this._errorRetries = 0;
+    if (this.current) this._rememberPlay(this.current);
     this.onPlaybackOk?.();
     this.onTrackChange?.(this.current);
+    // Re-send a fresh queue slice with new stream tokens for background continuity.
     this._prepareNativeNext();
     this._saveSession();
     this.onStateChange?.();
@@ -454,7 +529,11 @@ export class Player {
 
   async playShuffled(songs) {
     if (!songs.length) return;
+    this._recentTrackIds = [];
+    this._recentArtists = [];
     const shuffled = this._shuffleCopy(songs);
+    if (shuffled[0]) this._rememberPlay(shuffled[0]);
+    // Pre-shuffled order with artist spacing; play linearly so native queue advances reliably.
     return this.play(shuffled, 0, { shuffle: false });
   }
 

@@ -12,6 +12,7 @@ package com.tunefriend.app;
 
 import android.os.Build;
 import android.os.Bundle;
+import android.view.WindowManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import androidx.activity.OnBackPressedCallback;
@@ -22,6 +23,18 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BackgroundMusicPlugin.class);
         super.onCreate(savedInstanceState);
+
+        // Never draw over the lock screen or turn the display on for media — pocket
+        // presses were opening the full UI over the lock screen and skipping tracks.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(false);
+            setTurnScreenOn(false);
+        }
+        getWindow().clearFlags(
+            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+        );
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override

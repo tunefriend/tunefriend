@@ -18,8 +18,9 @@
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
             android:exported="true"
-            android:showWhenLocked="true"
-            android:turnScreenOn="false">
+            android:showWhenLocked="false"
+            android:turnScreenOn="false"
+            android:excludeFromRecents="false">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
