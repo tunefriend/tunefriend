@@ -2,7 +2,7 @@
 
 Stream music from a friend's self-hosted Subsonic server (Navidrome, Airsonic, Gonic, etc.) on Android.
 
-**Latest release:** [v2.25](https://github.com/tunefriend/tunefriend/releases/latest)
+**Latest release:** [v2.27](https://github.com/tunefriend/tunefriend/releases/latest)
 
 **F-Droid:** [com.tunefriend.app](https://f-droid.org/en/packages/com.tunefriend.app/)
 
