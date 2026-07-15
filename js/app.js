@@ -1353,24 +1353,32 @@ function renderPlaylistsScreen() {
   if (titleEl) titleEl.textContent = "Playlists";
   const list = getPlaylists();
   const libCount = getCachedSongs().length;
+  const allPlTracks = (() => {
+    const byId = new Map();
+    for (const pl of list) {
+      for (const t of pl.tracks || []) {
+        if (t?.id) byId.set(String(t.id), t);
+      }
+    }
+    return [...byId.values()];
+  })();
+
   let html = `
-    <p class="library-hint">Create a playlist, open it, then <strong>Add artist</strong> (search your library — e.g. Tom MacDonald). ${libCount ? `${libCount.toLocaleString()} songs synced.` : "Sync Library in Settings first."}</p>
-    <div class="album-actions">
-      <button class="quick-btn primary" id="btn-new-playlist">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-        New playlist
-      </button>
-    </div>
-    <div id="new-playlist-form" class="playlist-add-panel" hidden>
-      <input type="text" id="new-playlist-name" placeholder="Playlist name (not artist search)" autocomplete="off" maxlength="80" />
+    <p class="library-hint">Name a list → <strong>Create</strong> → open it → <strong>Add artist</strong>. ${libCount ? `${libCount.toLocaleString()} songs synced.` : "Sync Library in Settings first."}</p>
+    <div id="new-playlist-form" class="playlist-add-panel">
+      <input type="text" id="new-playlist-name" placeholder="Playlist name" autocomplete="off" maxlength="80" />
       <div class="album-actions">
         <button type="button" class="quick-btn primary" id="btn-create-playlist-confirm">Create</button>
         <button type="button" class="quick-btn secondary" id="btn-create-playlist-cancel">Cancel</button>
+        <button type="button" class="quick-btn secondary" id="btn-shuffle-all-playlists" ${allPlTracks.length ? "" : "disabled"}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+          Shuffle All
+        </button>
       </div>
     </div>
   `;
   if (!list.length) {
-    html += '<div class="empty-state">No playlists yet — tap New playlist (name the list), open it, then Add artist to search</div>';
+    html += '<div class="empty-state">No playlists yet — type a name above and tap Create, then Add artist</div>';
   } else {
     html += `<ul class="playlist-list">`;
     for (const pl of list) {
@@ -1389,17 +1397,10 @@ function renderPlaylistsScreen() {
   }
   panel.innerHTML = html;
 
-  const form = panel.querySelector("#new-playlist-form");
   const nameInput = panel.querySelector("#new-playlist-name");
-  panel.querySelector("#btn-new-playlist")?.addEventListener("click", () => {
-    form.hidden = !form.hidden;
-    if (!form.hidden) {
-      nameInput.value = "";
-      nameInput.focus();
-    }
-  });
   panel.querySelector("#btn-create-playlist-cancel")?.addEventListener("click", () => {
-    form.hidden = true;
+    if (nameInput) nameInput.value = "";
+    nameInput?.blur();
   });
   function submitNewPlaylist() {
     const name = nameInput?.value?.trim();
@@ -1422,6 +1423,16 @@ function renderPlaylistsScreen() {
       e.preventDefault();
       submitNewPlaylist();
     }
+  });
+
+  panel.querySelector("#btn-shuffle-all-playlists")?.addEventListener("click", () => {
+    if (!allPlTracks.length) {
+      showToast("No songs in any playlist yet");
+      return;
+    }
+    const pool = sampleDiverseSongs(allPlTracks, Math.min(allPlTracks.length, 900));
+    player.playShuffled(songsWithUrls(pool));
+    showToast(`Shuffling ${pool.length} songs from all playlists`);
   });
 
   panel.querySelectorAll("[data-open-playlist]").forEach((btn) => {
