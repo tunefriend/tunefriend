@@ -1272,23 +1272,75 @@ function openFavorites() {
   showScreen("screen-favorites");
 }
 
+/** First credited name: "Tom MacDonald, Adam Calhoun" → "Tom MacDonald" */
+function primaryArtistName(artist) {
+  const raw = String(artist || "").trim();
+  if (!raw) return "";
+  return raw
+    .split(/\s*(?:,|&|\/| feat\.? | ft\.? | featuring | with | x )\s*/i)[0]
+    .trim();
+}
+
+function artistSearchKey(name) {
+  return String(name || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/['']/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Artists for playlist picker — groups collabs under the primary name
+ * so "Tom MacDonald" finds all "Tom MacDonald, Adam Calhoun" tracks too.
+ */
 function libraryArtists() {
   const songs = getCachedSongs();
-  const map = new Map();
+  const map = new Map(); // primaryKey -> { name, count }
   for (const s of songs) {
-    const name = (s.artist || "").trim();
-    if (!name) continue;
-    const key = name.toLowerCase();
-    if (!map.has(key)) map.set(key, { name, count: 0 });
+    const full = (s.artist || "").trim();
+    if (!full) continue;
+    const primary = primaryArtistName(full) || full;
+    const key = artistSearchKey(primary);
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, { name: primary, count: 0 });
     map.get(key).count++;
   }
   return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function artistMatchesQuery(artistName, query) {
+  const a = artistSearchKey(artistName);
+  const q = artistSearchKey(query);
+  if (!a || !q) return false;
+  if (a.includes(q) || q.includes(a)) return true;
+  // token match: "tom mac" matches "tom macdonald"
+  const qTokens = q.split(" ").filter(Boolean);
+  if (qTokens.length && qTokens.every((t) => a.includes(t))) return true;
+  return false;
+}
+
+/** All library songs by this artist (exact, primary name, or credit line contains name). */
 function songsByArtistName(artistName) {
-  const key = String(artistName || "").trim().toLowerCase();
+  const key = artistSearchKey(artistName);
   if (!key) return [];
-  return getCachedSongs().filter((s) => String(s.artist || "").trim().toLowerCase() === key);
+  return getCachedSongs().filter((s) => {
+    const full = artistSearchKey(s.artist);
+    const primary = artistSearchKey(primaryArtistName(s.artist));
+    if (full === key || primary === key) return true;
+    if (full.includes(key) || primary.includes(key)) return true;
+    // multi-credit: any segment matches
+    const segments = String(s.artist || "").split(/\s*(?:,|&|\/)\s*/);
+    return segments.some((seg) => artistSearchKey(seg) === key || artistSearchKey(primaryArtistName(seg)) === key);
+  });
+}
+
+function filterArtistsByQuery(artists, query) {
+  const q = String(query || "").trim();
+  if (!q) return artists.slice(0, 50);
+  return artists.filter((a) => artistMatchesQuery(a.name, q)).slice(0, 50);
 }
 
 function renderPlaylistsScreen() {
@@ -1300,17 +1352,25 @@ function renderPlaylistsScreen() {
   }
   if (titleEl) titleEl.textContent = "Playlists";
   const list = getPlaylists();
+  const libCount = getCachedSongs().length;
   let html = `
-    <p class="library-hint">Make your own lists — add whole <strong>artists</strong> from your synced library, or open a list and manage songs. Separate from heart Favorites.</p>
+    <p class="library-hint">Create a playlist, open it, then <strong>Add artist</strong> (search your library — e.g. Tom MacDonald). ${libCount ? `${libCount.toLocaleString()} songs synced.` : "Sync Library in Settings first."}</p>
     <div class="album-actions">
       <button class="quick-btn primary" id="btn-new-playlist">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
         New playlist
       </button>
     </div>
+    <div id="new-playlist-form" class="playlist-add-panel" hidden>
+      <input type="text" id="new-playlist-name" placeholder="Playlist name (not artist search)" autocomplete="off" maxlength="80" />
+      <div class="album-actions">
+        <button type="button" class="quick-btn primary" id="btn-create-playlist-confirm">Create</button>
+        <button type="button" class="quick-btn secondary" id="btn-create-playlist-cancel">Cancel</button>
+      </div>
+    </div>
   `;
   if (!list.length) {
-    html += '<div class="empty-state">No playlists yet — tap New playlist, then Add artist</div>';
+    html += '<div class="empty-state">No playlists yet — tap New playlist (name the list), open it, then Add artist to search</div>';
   } else {
     html += `<ul class="playlist-list">`;
     for (const pl of list) {
@@ -1329,16 +1389,38 @@ function renderPlaylistsScreen() {
   }
   panel.innerHTML = html;
 
+  const form = panel.querySelector("#new-playlist-form");
+  const nameInput = panel.querySelector("#new-playlist-name");
   panel.querySelector("#btn-new-playlist")?.addEventListener("click", () => {
-    const name = prompt("Playlist name");
-    if (!name?.trim()) return;
+    form.hidden = !form.hidden;
+    if (!form.hidden) {
+      nameInput.value = "";
+      nameInput.focus();
+    }
+  });
+  panel.querySelector("#btn-create-playlist-cancel")?.addEventListener("click", () => {
+    form.hidden = true;
+  });
+  function submitNewPlaylist() {
+    const name = nameInput?.value?.trim();
+    if (!name) {
+      showToast("Enter a playlist name");
+      return;
+    }
     try {
-      const pl = createPlaylist(name.trim());
-      showToast(`Created “${pl.name}”`);
+      const pl = createPlaylist(name);
+      showToast(`Created “${pl.name}” — now Add artist`);
       playlistViewId = pl.id;
       renderPlaylistsScreen();
     } catch (e) {
       showToast(e.message || "Could not create playlist");
+    }
+  }
+  panel.querySelector("#btn-create-playlist-confirm")?.addEventListener("click", submitNewPlaylist);
+  nameInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submitNewPlaylist();
     }
   });
 
@@ -1373,8 +1455,9 @@ function renderPlaylistDetail(id) {
   if (titleEl) titleEl.textContent = pl.name;
   const tracks = pl.tracks || [];
 
+  const libN = getCachedSongs().length;
   panel.innerHTML = `
-    <p class="library-hint">${tracks.length} song${tracks.length === 1 ? "" : "s"} · Add an artist from your library (needs Sync Library).</p>
+    <p class="library-hint">${tracks.length} song${tracks.length === 1 ? "" : "s"} · Tap <strong>Add artist</strong>, then type a name (e.g. Tom MacDonald). Collabs count too.${libN ? "" : " ⚠ Sync Library first."}</p>
     <div class="album-actions">
       <button class="quick-btn primary" id="btn-play-playlist" ${tracks.length ? "" : "disabled"}>
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -1391,11 +1474,11 @@ function renderPlaylistDetail(id) {
       <button class="quick-btn secondary" id="btn-rename-pl">Rename</button>
     </div>
     <div id="playlist-add-artist-panel" class="playlist-add-panel" hidden>
-      <input type="search" id="playlist-artist-search" placeholder="Search artists in your library…" autocomplete="off" />
+      <input type="search" id="playlist-artist-search" placeholder="Type artist name…" autocomplete="off" enterkeyhint="search" />
       <ul id="playlist-artist-results" class="playlist-artist-results"></ul>
     </div>
     <div class="section-title">Tracks</div>
-    ${tracks.length ? `<ul class="song-list" id="playlist-track-list"></ul>` : '<div class="empty-state">Empty — tap Add artist</div>'}
+    ${tracks.length ? `<ul class="song-list" id="playlist-track-list"></ul>` : '<div class="empty-state">Empty — tap Add artist and search</div>'}
   `;
 
   if (tracks.length) {
@@ -1448,6 +1531,8 @@ function renderPlaylistDetail(id) {
   const addPanel = panel.querySelector("#playlist-add-artist-panel");
   const searchInput = panel.querySelector("#playlist-artist-search");
   const resultsEl = panel.querySelector("#playlist-artist-results");
+  const allArtists = libraryArtists();
+
   panel.querySelector("#btn-add-artist-pl")?.addEventListener("click", () => {
     const show = addPanel.hidden;
     addPanel.hidden = !show;
@@ -1455,16 +1540,57 @@ function renderPlaylistDetail(id) {
       searchInput.value = "";
       paintArtistResults("");
       searchInput.focus();
+      if (!getCachedSongs().length) {
+        showToast("Sync Library first (Settings) so artists can be found");
+      }
     }
   });
 
-  function paintArtistResults(q) {
-    const query = q.trim().toLowerCase();
-    let artists = libraryArtists();
-    if (query) artists = artists.filter((a) => a.name.toLowerCase().includes(query));
-    artists = artists.slice(0, 40);
+  async function paintArtistResults(q) {
+    const query = String(q || "").trim();
+    let artists = filterArtistsByQuery(allArtists, query);
+
+    // Live server search if local list empty but we have a query + API
+    if (!artists.length && query.length >= 2 && api) {
+      resultsEl.innerHTML = `<li class="empty-state" style="padding:0.75rem">Searching server…</li>`;
+      try {
+        const data = await api.search(query);
+        const fromServer = (data.artists || []).map((a) => ({
+          name: a.name,
+          count: a.albumCount || 0,
+          fromServer: true,
+          artistId: a.id,
+        }));
+        // Also surface primary artists from song hits
+        const songArtists = new Map();
+        for (const s of data.songs || []) {
+          const p = primaryArtistName(s.artist) || s.artist;
+          if (!p) continue;
+          const k = artistSearchKey(p);
+          if (!songArtists.has(k)) songArtists.set(k, { name: p, count: 0, fromServer: true });
+          songArtists.get(k).count++;
+        }
+        artists = [...fromServer, ...songArtists.values()];
+        // de-dupe by key
+        const seen = new Set();
+        artists = artists.filter((a) => {
+          const k = artistSearchKey(a.name);
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      } catch {
+        artists = [];
+      }
+    }
+
     if (!artists.length) {
-      resultsEl.innerHTML = `<li class="empty-state" style="padding:0.75rem">No artists — Sync Library first</li>`;
+      const hint = !getCachedSongs().length
+        ? "No library on this phone — Settings → Sync Library, then try again"
+        : query
+          ? `No artists matching “${query}” — try fewer letters (e.g. tom mac)`
+          : "Type an artist name to search";
+      resultsEl.innerHTML = `<li class="empty-state" style="padding:0.75rem">${escapeHtml(hint)}</li>`;
       return;
     }
     resultsEl._artistOptions = artists;
@@ -1472,25 +1598,37 @@ function renderPlaylistDetail(id) {
       <li>
         <button type="button" class="playlist-artist-row" data-artist-idx="${i}">
           <span class="playlist-item-name">${escapeHtml(a.name)}</span>
-          <span class="playlist-item-meta">${a.count} songs</span>
+          <span class="playlist-item-meta">${a.count ? `${a.count} songs` : "tap to add"}${a.fromServer ? " · server" : ""}</span>
         </button>
       </li>
     `).join("");
     resultsEl.querySelectorAll("[data-artist-idx]").forEach((btn) => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         const idx = parseInt(btn.dataset.artistIdx, 10);
-        const name = resultsEl._artistOptions?.[idx]?.name;
-        if (!name) return;
-        const songs = songsByArtistName(name);
+        const opt = resultsEl._artistOptions?.[idx];
+        if (!opt?.name) return;
+        let songs = songsByArtistName(opt.name);
+        // Server fallback: pull songs via search if local match thin
+        if (songs.length < 3 && api) {
+          try {
+            const data = await api.search(opt.name);
+            const extra = (data.songs || []).filter((s) =>
+              artistMatchesQuery(primaryArtistName(s.artist) || s.artist, opt.name)
+              || artistMatchesQuery(s.artist, opt.name)
+            );
+            const byId = new Map(songs.map((s) => [s.id, s]));
+            for (const s of extra) byId.set(s.id, s);
+            songs = [...byId.values()];
+          } catch { /* keep local */ }
+        }
         if (!songs.length) {
-          showToast("No songs for that artist in library");
+          showToast(`No songs found for ${opt.name}`);
           return;
         }
         try {
-          // Cap very large discographies so storage stays healthy
-          const pool = songs.length > 500 ? sampleDiverseSongs(songs, 500) : songs;
+          const pool = songs.length > 800 ? sampleDiverseSongs(songs, 800) : songs;
           const n = addTracksToPlaylist(pl.id, pool);
-          showToast(n ? `Added ${n} from ${name}` : `Already had ${name}`);
+          showToast(n ? `Added ${n} from ${opt.name}` : `Already had those from ${opt.name}`);
           renderPlaylistDetail(pl.id);
         } catch (e) {
           showToast(e.message || "Could not add artist");
@@ -1499,7 +1637,12 @@ function renderPlaylistDetail(id) {
     });
   }
 
-  searchInput?.addEventListener("input", () => paintArtistResults(searchInput.value));
+  let searchTimer;
+  searchInput?.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    const q = searchInput.value;
+    searchTimer = setTimeout(() => paintArtistResults(q), 200);
+  });
 }
 
 function openPlaylists() {
