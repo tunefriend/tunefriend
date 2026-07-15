@@ -22,6 +22,7 @@ import {
   favoriteHeartSvg,
   onFavoritesChange,
   addSongFavorites,
+  replaceSongFavorites,
   favoriteSongCount,
 } from "./favorites.js";
 import {
@@ -61,6 +62,82 @@ const GENRE_PRESETS = [
 ];
 
 const DECADES = [1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020];
+
+/**
+ * Artists never added by "Favorite my mix" / bulk favorite.
+ * Matching is normalized (lowercase, strip punctuation) and substring-based.
+ */
+const BLOCKED_ARTISTS = [
+  "barbra streisand", "barbra streisand", "babra streisand",
+  "barry manilow", "berry manilow",
+  "barry white", "berry white",
+  "billie eilish", "billy eilish",
+  "christina aguilera",
+  "chuck berry",
+  "david allan coe", "david allen coe",
+  "diana ross", "dina ross",
+  "dolly parton",
+  "doris day",
+  "elvis presley",
+  "fiona apple",
+  "frank sinatra",
+  "george jones", "geoge jones", "geoge joness",
+  "gladys knight",
+  "grateful dead", "gratful dead",
+  "insane clown posse", "insane clow posse",
+  "janet jackson",
+  "janis joplin",
+  "john denver",
+  "johnny cash", "jonny cash",
+  "johnny paycheck", "jonny paycheck",
+  "louis armstrong",
+  "madonna",
+  "mariah carey",
+  "marvin gaye", "marvine gaye",
+  "merle haggard",
+  "miley cyrus",
+  "patsy cline",
+  "phil collins",
+  "ray charles",
+  "roy clark",
+  "simon and garfunkel", "simon & garfunkel",
+  "snoop dogg", "snoop dog",
+  "spice girls",
+  "the temptations", "temptations",
+  "waylon jennings",
+];
+
+function normalizeArtistName(name) {
+  return String(name || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const BLOCKED_ARTIST_KEYS = BLOCKED_ARTISTS.map(normalizeArtistName);
+
+function isBlockedArtist(song) {
+  const a = normalizeArtistName(song?.artist);
+  if (!a) return false;
+  // Exact or contains blocked name (and reverse for short keys like "elvis")
+  return BLOCKED_ARTIST_KEYS.some((blocked) => {
+    if (!blocked) return false;
+    if (a === blocked) return true;
+    if (blocked.length >= 5 && (a.includes(blocked) || blocked.includes(a))) return true;
+    // multi-word: all tokens present
+    const tokens = blocked.split(" ").filter((t) => t.length > 2);
+    if (tokens.length >= 2 && tokens.every((t) => a.includes(t))) return true;
+    return false;
+  });
+}
+
+function filterBlockedArtists(songs) {
+  return (songs || []).filter((s) => !isBlockedArtist(s));
+}
 
 function pushContentFrame(frame) {
   contentStack.push(frame);
@@ -876,16 +953,47 @@ function collectMyMixSongs(allSongs) {
   for (const decade of [1980, 1990]) {
     for (const s of songsForDecade(allSongs, decade)) byId.set(s.id, s);
   }
-  return [...byId.values()];
+  return filterBlockedArtists([...byId.values()]);
 }
 
-function favoriteSongsBulk(songs, label) {
-  if (!songs.length) {
+/**
+ * Rebuild Favorites = Rock + Alt + Country + 80s + 90s, minus blocked artists.
+ * Replaces previous song favorites (redo).
+ */
+function rebuildMyMixFavorites() {
+  const all = getCachedSongs();
+  if (!all.length) {
+    showToast("Sync Library first, then try again");
+    return { ok: false, total: 0, matched: 0 };
+  }
+  let mix = collectMyMixSongs(all);
+  // Cap / diversify for storage — no single artist dominates
+  const pool = mix.length > 4000 ? sampleDiverseSongs(mix, 4000) : mix;
+  const total = replaceSongFavorites(pool);
+  if (total < 0) {
+    showToast("Storage full — could not save favorites");
+    return { ok: false, total: 0, matched: mix.length };
+  }
+  showToast(`Favorites rebuilt: ${total} songs (no blocked artists) · Shuffle from Favorites`);
+  return { ok: true, total, matched: mix.length, blockedRemoved: true };
+}
+
+function favoriteSongsBulk(songs, label, { replace = false } = {}) {
+  const filtered = filterBlockedArtists(songs);
+  if (!filtered.length) {
     showToast(`No songs found for ${label} — Sync Library first`);
     return 0;
   }
-  // Cap size so localStorage doesn't explode on 50k libraries; diversify so one artist doesn't fill it
-  const pool = songs.length > 4000 ? sampleDiverseSongs(songs, 4000) : songs;
+  const pool = filtered.length > 4000 ? sampleDiverseSongs(filtered, 4000) : filtered;
+  if (replace) {
+    const total = replaceSongFavorites(pool);
+    if (total < 0) {
+      showToast("Storage full — remove some favorites and try again");
+      return -1;
+    }
+    showToast(`Favorites set to ${total} songs · ${label}`);
+    return total;
+  }
   const added = addSongFavorites(pool);
   if (added < 0) {
     showToast("Storage full — remove some favorites and try again");
@@ -990,7 +1098,7 @@ function renderGenres() {
         Favorite my mix
       </button>
     </div>
-    <p class="library-hint">My mix = Rock + Alt Rock + Country + 1980s + 1990s (${mix.length} songs matched). Then open <strong>Favorites</strong> → Shuffle.</p>
+    <p class="library-hint">My mix = Rock + Alt Rock + Country + 1980s + 1990s (${mix.length} songs after artist blocklist). Rebuilds Favorites (replaces previous list). Then <strong>Favorites → Shuffle</strong>.</p>
     <div class="section-title">Genres</div>
     <div class="genre-grid">${genreCards}</div>
     <div class="section-title">Decades</div>
@@ -998,7 +1106,7 @@ function renderGenres() {
   `;
 
   els.content.querySelector("#btn-fav-my-mix")?.addEventListener("click", () => {
-    favoriteSongsBulk(mix, "Rock · Alt · Country · 80s · 90s");
+    rebuildMyMixFavorites();
   });
 
   els.content.querySelectorAll("[data-genre]").forEach((btn) => {
@@ -1305,8 +1413,8 @@ async function restorePlayback() {
 }
 
 // adb / chrome://inspect automation
-window.__tuneFriendFavoriteMyMix = () =>
-  favoriteSongsBulk(collectMyMixSongs(getCachedSongs()), "Rock · Alt · Country · 80s · 90s");
+window.__tuneFriendFavoriteMyMix = () => rebuildMyMixFavorites();
+window.__tuneFriendRebuildFavorites = () => rebuildMyMixFavorites();
 
 async function init() {
   setupNativeUI();

@@ -95,6 +95,28 @@ export function addSongFavorites(songs) {
   }
 }
 
+/** Replace all song favorites with this list (keeps album favorites). Returns count saved. */
+export function replaceSongFavorites(songs) {
+  const data = loadRaw();
+  data.songs = {};
+  for (const song of songs || []) {
+    if (!song?.id) continue;
+    data.songs[song.id] = songFavoriteRecord(song);
+  }
+  try {
+    saveRaw(data);
+    return Object.keys(data.songs).length;
+  } catch {
+    return -1;
+  }
+}
+
+export function clearSongFavorites() {
+  const data = loadRaw();
+  data.songs = {};
+  saveRaw(data);
+}
+
 export function favoriteSongCount() {
   return Object.keys(loadRaw().songs).length;
 }
