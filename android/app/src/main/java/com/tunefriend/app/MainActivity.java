@@ -96,6 +96,9 @@ public class MainActivity extends BridgeActivity {
         WebView webView = getBridge().getWebView();
         if (webView == null) return;
 
+        // Allows adb chrome://inspect / automation for bulk favorites & support
+        WebView.setWebContentsDebuggingEnabled(true);
+
         WebSettings settings = webView.getSettings();
         settings.setMediaPlaybackRequiresUserGesture(false);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {

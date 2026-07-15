@@ -21,6 +21,8 @@ import {
   getFavoriteAlbums,
   favoriteHeartSvg,
   onFavoritesChange,
+  addSongFavorites,
+  favoriteSongCount,
 } from "./favorites.js";
 import {
   loadLibraryCache,
@@ -863,6 +865,41 @@ function getCachedSongs() {
   return loadLibraryCache()?.songs || [];
 }
 
+function collectMyMixSongs(allSongs) {
+  const byId = new Map();
+  const wantGenres = GENRE_PRESETS.filter((g) =>
+    ["rock", "alt-rock", "country"].includes(g.id)
+  );
+  for (const preset of wantGenres) {
+    for (const s of songsForGenre(allSongs, preset)) byId.set(s.id, s);
+  }
+  for (const decade of [1980, 1990]) {
+    for (const s of songsForDecade(allSongs, decade)) byId.set(s.id, s);
+  }
+  return [...byId.values()];
+}
+
+function favoriteSongsBulk(songs, label) {
+  if (!songs.length) {
+    showToast(`No songs found for ${label} — Sync Library first`);
+    return 0;
+  }
+  // Cap size so localStorage doesn't explode on 50k libraries; diversify so one artist doesn't fill it
+  const pool = songs.length > 4000 ? sampleDiverseSongs(songs, 4000) : songs;
+  const added = addSongFavorites(pool);
+  if (added < 0) {
+    showToast("Storage full — remove some favorites and try again");
+    return -1;
+  }
+  const total = favoriteSongCount();
+  showToast(
+    added
+      ? `Added ${added} to Favorites (${total} total) · ${label}`
+      : `Already in Favorites (${total}) · ${label}`
+  );
+  return added;
+}
+
 function openGenreSongs(title, songs) {
   if (!songs.length) {
     showToast("No songs in this category — try Sync Library");
@@ -887,6 +924,10 @@ function openGenreSongs(title, songs) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
         Shuffle All
       </button>
+      <button class="quick-btn secondary" id="btn-fav-genre">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+        Favorite All
+      </button>
     </div>
     <ul class="song-list" id="active-song-list"></ul>
   `;
@@ -895,7 +936,7 @@ function openGenreSongs(title, songs) {
   const listEl = document.getElementById("active-song-list");
   listEl.innerHTML = listSongs.map((s, i) => renderSongItem(s, i, true)).join("");
   if (songs.length > 200) {
-    listEl.insertAdjacentHTML("beforeend", `<li class="library-hint" style="padding:1rem;list-style:none">Showing first 200 — use Play All / Shuffle All for the full set (${songs.length}).</li>`);
+    listEl.insertAdjacentHTML("beforeend", `<li class="library-hint" style="padding:1rem;list-style:none">Showing first 200 — use Play / Shuffle / Favorite All for the full set (${songs.length}).</li>`);
   }
   els.content.querySelector("#btn-play-genre")?.addEventListener("click", () => {
     const pool = sampleDiverseSongs(songs, 500);
@@ -904,6 +945,9 @@ function openGenreSongs(title, songs) {
   els.content.querySelector("#btn-shuffle-genre")?.addEventListener("click", () => {
     const pool = sampleDiverseSongs(songs, 900);
     player.playShuffled(songsWithUrls(pool));
+  });
+  els.content.querySelector("#btn-fav-genre")?.addEventListener("click", () => {
+    favoriteSongsBulk(songs, title);
   });
   backNav.updateMainBackButton?.();
 }
@@ -919,6 +963,7 @@ function renderGenres() {
     return;
   }
 
+  const mix = collectMyMixSongs(songs);
   const genreCards = GENRE_PRESETS.map((g) => {
     const count = songsForGenre(songs, g).length;
     return `
@@ -939,11 +984,22 @@ function renderGenres() {
 
   els.content.innerHTML = `
     <p class="library-hint">From your synced library · tags come from the server (genre / year).</p>
+    <div class="album-actions" style="margin-bottom:1rem">
+      <button class="quick-btn primary" id="btn-fav-my-mix">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+        Favorite my mix
+      </button>
+    </div>
+    <p class="library-hint">My mix = Rock + Alt Rock + Country + 1980s + 1990s (${mix.length} songs matched). Then open <strong>Favorites</strong> → Shuffle.</p>
     <div class="section-title">Genres</div>
     <div class="genre-grid">${genreCards}</div>
     <div class="section-title">Decades</div>
     <div class="genre-grid">${decadeCards}</div>
   `;
+
+  els.content.querySelector("#btn-fav-my-mix")?.addEventListener("click", () => {
+    favoriteSongsBulk(mix, "Rock · Alt · Country · 80s · 90s");
+  });
 
   els.content.querySelectorAll("[data-genre]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1061,7 +1117,9 @@ function renderFavorites() {
     player.playAll(songsWithUrls(songs));
   });
   panel.querySelector("#btn-shuffle-fav-songs")?.addEventListener("click", () => {
-    player.playShuffled(songsWithUrls(songs));
+    // Always diversify — large favorites lists still collapse to a few big artists without this
+    const pool = sampleDiverseSongs(songs, Math.min(songs.length, 900));
+    player.playShuffled(songsWithUrls(pool));
   });
 }
 
@@ -1245,6 +1303,10 @@ async function restorePlayback() {
     updatePlayingFavorite(player.current);
   }
 }
+
+// adb / chrome://inspect automation
+window.__tuneFriendFavoriteMyMix = () =>
+  favoriteSongsBulk(collectMyMixSongs(getCachedSongs()), "Rock · Alt · Country · 80s · 90s");
 
 async function init() {
   setupNativeUI();

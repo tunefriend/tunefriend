@@ -47,14 +47,8 @@ export function isAlbumFavorite(id) {
   return !!loadRaw().albums[id];
 }
 
-export function toggleSongFavorite(song) {
-  const data = loadRaw();
-  if (data.songs[song.id]) {
-    delete data.songs[song.id];
-    saveRaw(data);
-    return false;
-  }
-  data.songs[song.id] = {
+function songFavoriteRecord(song) {
+  return {
     id: song.id,
     title: song.title,
     artist: song.artist,
@@ -65,9 +59,44 @@ export function toggleSongFavorite(song) {
     duration: song.duration,
     track: song.track,
     year: song.year,
+    genre: song.genre || "",
   };
+}
+
+export function toggleSongFavorite(song) {
+  const data = loadRaw();
+  if (data.songs[song.id]) {
+    delete data.songs[song.id];
+    saveRaw(data);
+    return false;
+  }
+  data.songs[song.id] = songFavoriteRecord(song);
   saveRaw(data);
   return true;
+}
+
+/** Bulk-add songs to favorites (skips ones already favorited). Returns how many were new. */
+export function addSongFavorites(songs) {
+  if (!songs?.length) return 0;
+  const data = loadRaw();
+  let added = 0;
+  for (const song of songs) {
+    if (!song?.id || data.songs[song.id]) continue;
+    data.songs[song.id] = songFavoriteRecord(song);
+    added++;
+  }
+  if (added === 0) return 0;
+  try {
+    saveRaw(data);
+    return added;
+  } catch {
+    // localStorage quota — keep existing favorites, report partial failure
+    return -1;
+  }
+}
+
+export function favoriteSongCount() {
+  return Object.keys(loadRaw().songs).length;
 }
 
 export function toggleAlbumFavorite(album) {
