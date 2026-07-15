@@ -15,6 +15,7 @@ export function createBackNav({
   getCurrentTab,
   onBackFromPlayer,
   onBackFromFavorites,
+  onBackFromPlaylists,
   onBackFromSettings,
   onBackFromMainDrillDown,
   onBackToHome,
@@ -66,6 +67,10 @@ export function createBackNav({
       onBackFromFavorites?.();
       return true;
     }
+    if (screen === "screen-playlists") {
+      onBackFromPlaylists?.();
+      return true;
+    }
     if (screen === "screen-settings") {
       onBackFromSettings?.(lastMainTab);
       return true;
@@ -88,6 +93,7 @@ export function createBackNav({
     document.getElementById("btn-back-main")?.addEventListener("click", () => handleBack());
     document.getElementById("btn-back-settings")?.addEventListener("click", () => handleBack());
     document.getElementById("btn-back-favorites")?.addEventListener("click", () => handleBack());
+    document.getElementById("btn-back-playlists")?.addEventListener("click", () => handleBack());
     document.getElementById("btn-close-player")?.addEventListener("click", () => handleBack());
   }
 

@@ -35,6 +35,16 @@ import {
 } from "./library.js";
 import { clearPlaybackSession } from "./session.js";
 import { createBackNav } from "./back-nav.js";
+import {
+  getPlaylists,
+  getPlaylist,
+  createPlaylist,
+  renamePlaylist,
+  deletePlaylist,
+  addTracksToPlaylist,
+  removeTrackFromPlaylist,
+  onPlaylistsChange,
+} from "./playlists.js";
 
 let api = null;
 let currentTab = "home";
@@ -614,11 +624,21 @@ function popMainContent() {
   backNav.updateMainBackButton?.();
 }
 
+let playlistViewId = null; // null = list, else open playlist detail
+
 const backNav = createBackNav({
   getActiveScreen: () => document.querySelector(".screen.active")?.id,
   getCurrentTab: () => currentTab,
   onBackFromPlayer: () => showScreen("screen-main"),
   onBackFromFavorites: () => showScreen("screen-main"),
+  onBackFromPlaylists: () => {
+    if (playlistViewId) {
+      playlistViewId = null;
+      renderPlaylistsScreen();
+      return;
+    }
+    showScreen("screen-main");
+  },
   onBackFromSettings: (tab) => {
     showScreen("screen-main");
     if (tab && tab !== "settings") switchTab(tab, { fromBack: true });
@@ -1185,13 +1205,28 @@ function renderFavorites() {
   const panel = document.getElementById("favorites-content");
   const songs = getFavoriteSongs();
   const albums = getFavoriteAlbums();
+  const playlists = getPlaylists();
+
+  let html = `
+    <div class="favorites-section">
+      <div class="section-title">Playlists</div>
+      <p class="library-hint" style="margin-bottom:0.75rem">Your custom lists (by artist or song). Manage them under <strong>Playlists</strong> in the top bar.</p>
+      <div class="album-actions">
+        <button class="quick-btn secondary" id="btn-open-playlists-from-fav">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+          ${playlists.length ? `Open Playlists (${playlists.length})` : "Create a playlist"}
+        </button>
+      </div>
+    </div>
+  `;
 
   if (!songs.length && !albums.length) {
-    panel.innerHTML = '<div class="empty-state">No favorites yet — tap the heart on any song or album</div>';
+    html += '<div class="empty-state" style="padding-top:1rem">No favorite songs/albums yet — tap the heart on any song or album</div>';
+    panel.innerHTML = html;
+    panel.querySelector("#btn-open-playlists-from-fav")?.addEventListener("click", openPlaylists);
     return;
   }
 
-  let html = "";
   if (songs.length) {
     html += `
       <div class="favorites-section">
@@ -1221,6 +1256,7 @@ function renderFavorites() {
   attachAlbumClicks(panel, "screen-favorites");
   attachFavoriteHandlers(panel, songs, albums);
 
+  panel.querySelector("#btn-open-playlists-from-fav")?.addEventListener("click", openPlaylists);
   panel.querySelector("#btn-play-fav-songs")?.addEventListener("click", () => {
     player.playAll(songsWithUrls(songs));
   });
@@ -1234,6 +1270,242 @@ function renderFavorites() {
 function openFavorites() {
   renderFavorites();
   showScreen("screen-favorites");
+}
+
+function libraryArtists() {
+  const songs = getCachedSongs();
+  const map = new Map();
+  for (const s of songs) {
+    const name = (s.artist || "").trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (!map.has(key)) map.set(key, { name, count: 0 });
+    map.get(key).count++;
+  }
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function songsByArtistName(artistName) {
+  const key = String(artistName || "").trim().toLowerCase();
+  if (!key) return [];
+  return getCachedSongs().filter((s) => String(s.artist || "").trim().toLowerCase() === key);
+}
+
+function renderPlaylistsScreen() {
+  const panel = document.getElementById("playlists-content");
+  const titleEl = document.getElementById("playlists-title");
+  if (playlistViewId) {
+    renderPlaylistDetail(playlistViewId);
+    return;
+  }
+  if (titleEl) titleEl.textContent = "Playlists";
+  const list = getPlaylists();
+  let html = `
+    <p class="library-hint">Make your own lists — add whole <strong>artists</strong> from your synced library, or open a list and manage songs. Separate from heart Favorites.</p>
+    <div class="album-actions">
+      <button class="quick-btn primary" id="btn-new-playlist">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+        New playlist
+      </button>
+    </div>
+  `;
+  if (!list.length) {
+    html += '<div class="empty-state">No playlists yet — tap New playlist, then Add artist</div>';
+  } else {
+    html += `<ul class="playlist-list">`;
+    for (const pl of list) {
+      html += `
+        <li class="playlist-item" data-playlist-id="${pl.id}">
+          <button type="button" class="playlist-item-main" data-open-playlist="${pl.id}">
+            <span class="playlist-item-name">${escapeHtml(pl.name)}</span>
+            <span class="playlist-item-meta">${pl.tracks.length} song${pl.tracks.length === 1 ? "" : "s"}</span>
+          </button>
+          <button type="button" class="icon-btn playlist-item-delete" data-delete-playlist="${pl.id}" aria-label="Delete playlist">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
+          </button>
+        </li>`;
+    }
+    html += `</ul>`;
+  }
+  panel.innerHTML = html;
+
+  panel.querySelector("#btn-new-playlist")?.addEventListener("click", () => {
+    const name = prompt("Playlist name");
+    if (!name?.trim()) return;
+    try {
+      const pl = createPlaylist(name.trim());
+      showToast(`Created “${pl.name}”`);
+      playlistViewId = pl.id;
+      renderPlaylistsScreen();
+    } catch (e) {
+      showToast(e.message || "Could not create playlist");
+    }
+  });
+
+  panel.querySelectorAll("[data-open-playlist]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      playlistViewId = btn.dataset.openPlaylist;
+      renderPlaylistsScreen();
+    });
+  });
+  panel.querySelectorAll("[data-delete-playlist]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const pl = getPlaylist(btn.dataset.deletePlaylist);
+      if (!pl) return;
+      if (!confirm(`Delete playlist “${pl.name}”?`)) return;
+      deletePlaylist(pl.id);
+      showToast("Playlist deleted");
+      renderPlaylistsScreen();
+    });
+  });
+}
+
+function renderPlaylistDetail(id) {
+  const panel = document.getElementById("playlists-content");
+  const titleEl = document.getElementById("playlists-title");
+  const pl = getPlaylist(id);
+  if (!pl) {
+    playlistViewId = null;
+    renderPlaylistsScreen();
+    return;
+  }
+  if (titleEl) titleEl.textContent = pl.name;
+  const tracks = pl.tracks || [];
+
+  panel.innerHTML = `
+    <p class="library-hint">${tracks.length} song${tracks.length === 1 ? "" : "s"} · Add an artist from your library (needs Sync Library).</p>
+    <div class="album-actions">
+      <button class="quick-btn primary" id="btn-play-playlist" ${tracks.length ? "" : "disabled"}>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        Play All
+      </button>
+      <button class="quick-btn secondary" id="btn-shuffle-playlist" ${tracks.length ? "" : "disabled"}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+        Shuffle
+      </button>
+      <button class="quick-btn secondary" id="btn-add-artist-pl">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+        Add artist
+      </button>
+      <button class="quick-btn secondary" id="btn-rename-pl">Rename</button>
+    </div>
+    <div id="playlist-add-artist-panel" class="playlist-add-panel" hidden>
+      <input type="search" id="playlist-artist-search" placeholder="Search artists in your library…" autocomplete="off" />
+      <ul id="playlist-artist-results" class="playlist-artist-results"></ul>
+    </div>
+    <div class="section-title">Tracks</div>
+    ${tracks.length ? `<ul class="song-list" id="playlist-track-list"></ul>` : '<div class="empty-state">Empty — tap Add artist</div>'}
+  `;
+
+  if (tracks.length) {
+    const listEl = document.getElementById("playlist-track-list");
+    listEl.innerHTML = tracks.map((s, i) => `
+      <li class="song-item" data-song-idx="${i}" data-song-id="${s.id}">
+        <span class="song-num">${i + 1}</span>
+        <div class="song-info">
+          <div class="song-title">${escapeHtml(s.title)}</div>
+          <div class="song-sub">${escapeHtml(s.artist || "")}</div>
+        </div>
+        <button type="button" class="icon-btn song-remove" data-remove-track="${s.id}" aria-label="Remove">×</button>
+        <span class="song-dur">${formatDuration(s.duration)}</span>
+      </li>
+    `).join("");
+
+    bindListData(panel, tracks, []);
+    attachSongClicks(panel, tracks);
+
+    listEl.querySelectorAll("[data-remove-track]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        removeTrackFromPlaylist(pl.id, btn.dataset.removeTrack);
+        showToast("Removed from playlist");
+        renderPlaylistDetail(pl.id);
+      });
+    });
+  }
+
+  panel.querySelector("#btn-play-playlist")?.addEventListener("click", () => {
+    if (!tracks.length) return;
+    player.playAll(songsWithUrls(tracks));
+  });
+  panel.querySelector("#btn-shuffle-playlist")?.addEventListener("click", () => {
+    if (!tracks.length) return;
+    const pool = sampleDiverseSongs(tracks, Math.min(tracks.length, 900));
+    player.playShuffled(songsWithUrls(pool));
+  });
+  panel.querySelector("#btn-rename-pl")?.addEventListener("click", () => {
+    const name = prompt("Rename playlist", pl.name);
+    if (!name?.trim()) return;
+    try {
+      renamePlaylist(pl.id, name.trim());
+      renderPlaylistDetail(pl.id);
+    } catch (e) {
+      showToast(e.message);
+    }
+  });
+
+  const addPanel = panel.querySelector("#playlist-add-artist-panel");
+  const searchInput = panel.querySelector("#playlist-artist-search");
+  const resultsEl = panel.querySelector("#playlist-artist-results");
+  panel.querySelector("#btn-add-artist-pl")?.addEventListener("click", () => {
+    const show = addPanel.hidden;
+    addPanel.hidden = !show;
+    if (show) {
+      searchInput.value = "";
+      paintArtistResults("");
+      searchInput.focus();
+    }
+  });
+
+  function paintArtistResults(q) {
+    const query = q.trim().toLowerCase();
+    let artists = libraryArtists();
+    if (query) artists = artists.filter((a) => a.name.toLowerCase().includes(query));
+    artists = artists.slice(0, 40);
+    if (!artists.length) {
+      resultsEl.innerHTML = `<li class="empty-state" style="padding:0.75rem">No artists — Sync Library first</li>`;
+      return;
+    }
+    resultsEl._artistOptions = artists;
+    resultsEl.innerHTML = artists.map((a, i) => `
+      <li>
+        <button type="button" class="playlist-artist-row" data-artist-idx="${i}">
+          <span class="playlist-item-name">${escapeHtml(a.name)}</span>
+          <span class="playlist-item-meta">${a.count} songs</span>
+        </button>
+      </li>
+    `).join("");
+    resultsEl.querySelectorAll("[data-artist-idx]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = parseInt(btn.dataset.artistIdx, 10);
+        const name = resultsEl._artistOptions?.[idx]?.name;
+        if (!name) return;
+        const songs = songsByArtistName(name);
+        if (!songs.length) {
+          showToast("No songs for that artist in library");
+          return;
+        }
+        try {
+          // Cap very large discographies so storage stays healthy
+          const pool = songs.length > 500 ? sampleDiverseSongs(songs, 500) : songs;
+          const n = addTracksToPlaylist(pl.id, pool);
+          showToast(n ? `Added ${n} from ${name}` : `Already had ${name}`);
+          renderPlaylistDetail(pl.id);
+        } catch (e) {
+          showToast(e.message || "Could not add artist");
+        }
+      });
+    });
+  }
+
+  searchInput?.addEventListener("input", () => paintArtistResults(searchInput.value));
+}
+
+function openPlaylists() {
+  playlistViewId = null;
+  renderPlaylistsScreen();
+  showScreen("screen-playlists");
 }
 
 function openSettings() {
@@ -1299,9 +1571,19 @@ els.loginForm.addEventListener("submit", async (e) => {
 });
 
 document.getElementById("btn-favorites").addEventListener("click", openFavorites);
+document.getElementById("btn-playlists")?.addEventListener("click", openPlaylists);
 
 onFavoritesChange(() => {
   updatePlayingFavorite(player.current);
+  if (document.getElementById("screen-favorites")?.classList.contains("active")) {
+    renderFavorites();
+  }
+});
+
+onPlaylistsChange(() => {
+  if (document.getElementById("screen-playlists")?.classList.contains("active")) {
+    renderPlaylistsScreen();
+  }
   if (document.getElementById("screen-favorites")?.classList.contains("active")) {
     renderFavorites();
   }

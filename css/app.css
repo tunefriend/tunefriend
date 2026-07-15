@@ -968,6 +968,123 @@ body {
   line-height: 1.45;
 }
 
+/* Playlists */
+.playlist-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.playlist-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--bg-card);
+  border: 1px solid #2a2a3a;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.playlist-item-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding: 0.9rem 1rem;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.playlist-item-main:active {
+  opacity: 0.85;
+}
+
+.playlist-item-name {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.playlist-item-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.playlist-item-delete {
+  flex-shrink: 0;
+  margin-right: 0.35rem;
+  opacity: 0.7;
+}
+
+.playlist-add-panel {
+  margin: 0.75rem 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.playlist-add-panel input {
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid #2a2a3a;
+  border-radius: 999px;
+  padding: 0.75rem 1.25rem;
+  color: var(--text);
+  font-size: 1rem;
+  outline: none;
+}
+
+.playlist-add-panel input:focus {
+  border-color: var(--accent);
+}
+
+.playlist-artist-results {
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid #2a2a3a;
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+
+.playlist-artist-row {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: none;
+  border: none;
+  border-bottom: 1px solid #1a1a28;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.playlist-artist-row:last-child {
+  border-bottom: none;
+}
+
+.playlist-artist-row:active {
+  background: #222233;
+}
+
+.song-remove {
+  font-size: 1.25rem;
+  line-height: 1;
+  opacity: 0.65;
+  flex-shrink: 0;
+}
+
 .settings-field {
   display: flex;
   flex-direction: column;
