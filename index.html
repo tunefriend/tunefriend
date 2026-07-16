@@ -175,10 +175,20 @@
         </div>
 
         <div class="settings-group">
+          <h3>Identify</h3>
+          <p class="settings-hint">Listen with the mic (AcoustID / Chromaprint), then play the match from your library if you have it.</p>
+          <label class="settings-field">
+            <span>AcoustID API key (free)</span>
+            <input type="text" id="setting-acoustid-client" placeholder="From acoustid.org/new-application" autocomplete="off" />
+          </label>
+          <p class="settings-hint settings-hint-muted">Optional if using tunefriend.org (server can proxy). Open-source apps get a free key.</p>
+        </div>
+
+        <div class="settings-group">
           <h3>About</h3>
           <div class="settings-row">
             <span class="settings-label">Version</span>
-            <span class="settings-value">2.35</span>
+            <span class="settings-value">2.36</span>
           </div>
           <div class="settings-actions">
             <button type="button" class="btn primary settings-btn-block" id="btn-feedback">Send feedback</button>

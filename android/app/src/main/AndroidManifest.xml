@@ -55,4 +55,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Prompt user for Unrestricted battery so overnight play survives Doze -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- AcoustID / Identify: record short clip from mic -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 </manifest>
