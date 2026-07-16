@@ -1691,6 +1691,8 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
 document.getElementById("btn-settings")?.addEventListener("click", openSettings);
 
 const DONATE_URL = "https://liberapay.com/west66/donate";
+const FEEDBACK_EMAIL = "tunefriend.music@proton.me";
+
 function openExternalLink(url) {
   try {
     if (isNativeApp() && window.Capacitor?.Plugins?.App?.openUrl) {
@@ -1698,8 +1700,38 @@ function openExternalLink(url) {
       return;
     }
   } catch { /* fall through */ }
+  if (url.startsWith("mailto:")) {
+    window.location.href = url;
+    return;
+  }
   window.open(url, "_blank", "noopener,noreferrer");
 }
+
+function feedbackMailto() {
+  const ver = "2.34";
+  const body = [
+    "Device / Android version:",
+    "TuneFriend version: " + ver,
+    "",
+    "What happened:",
+    "",
+    "What I expected:",
+    "",
+  ].join("\n");
+  return (
+    "mailto:" +
+    FEEDBACK_EMAIL +
+    "?subject=" +
+    encodeURIComponent("TuneFriend feedback") +
+    "&body=" +
+    encodeURIComponent(body)
+  );
+}
+
+document.getElementById("btn-feedback")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  openExternalLink(feedbackMailto());
+});
 document.getElementById("btn-donate")?.addEventListener("click", (e) => {
   e.preventDefault();
   openExternalLink(DONATE_URL);
