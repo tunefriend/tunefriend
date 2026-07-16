@@ -38,13 +38,12 @@ class TuneFriendHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/proxy":
             self._handle_proxy(parsed)
             return
-        if parsed.path == "/api/acoustid":
-            self._handle_acoustid(parsed)
-            return
         if parsed.path == "/api/health":
             self._json_response({"ok": True, "app": "TuneFriend"})
             return
         return super().do_GET()
+
+
 
     def _handle_proxy(self, parsed):
         qs = urllib.parse.parse_qs(parsed.query)
@@ -86,52 +85,6 @@ class TuneFriendHandler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._json_response({"error": str(e)}, 500)
 
-    def _handle_acoustid(self, parsed):
-        """Proxy AcoustID lookup (optional ACOUSTID_CLIENT env, or client= query)."""
-        qs = urllib.parse.parse_qs(parsed.query)
-        fingerprint = (qs.get("fingerprint") or [""])[0]
-        duration = (qs.get("duration") or ["1"])[0]
-        client = (qs.get("client") or [""])[0].strip() or os.environ.get("ACOUSTID_CLIENT", "").strip()
-
-        if not fingerprint:
-            self._json_response({"error": "Missing fingerprint"}, 400)
-            return
-        if not client:
-            self._json_response(
-                {
-                    "error": "AcoustID client not configured. "
-                    "Set ACOUSTID_CLIENT env or pass client= (free at acoustid.org/new-application)."
-                },
-                400,
-            )
-            return
-
-        params = urllib.parse.urlencode(
-            {
-                "client": client,
-                "meta": "recordings+releasegroups+compress",
-                "fingerprint": fingerprint,
-                "duration": str(max(1, int(float(duration) or 1))),
-            }
-        )
-        target = f"https://api.acoustid.org/v2/lookup?{params}"
-        try:
-            req = urllib.request.Request(target, headers={"User-Agent": "TuneFriend/1.0"})
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                body = resp.read(2 * 1024 * 1024)
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-        except urllib.error.HTTPError as e:
-            self._json_response({"error": f"AcoustID HTTP {e.code}"}, 502)
-        except urllib.error.URLError as e:
-            self._json_response({"error": f"AcoustID unreachable: {e.reason}"}, 502)
-        except Exception as e:
-            self._json_response({"error": str(e)}, 500)
 
     def _json_response(self, data, status=200):
         body = json.dumps(data).encode()

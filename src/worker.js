@@ -22,7 +22,7 @@ function json(data, status = 200) {
 function corsHeaders(extra = {}) {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Range, Authorization",
     "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
     ...extra,
@@ -169,65 +169,6 @@ async function handleProxy(request, url) {
   }
 }
 
-/**
- * Proxy AcoustID lookup so the app key can live as a Worker secret (ACOUSTID_CLIENT).
- * Query: fingerprint, duration, optional client (overrides secret).
- */
-async function handleAcoustId(request, url, env) {
-  if (request.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders() });
-  }
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    return json({ error: "Method not allowed" }, 405);
-  }
-
-  const fingerprint = url.searchParams.get("fingerprint") || "";
-  const duration = url.searchParams.get("duration") || "";
-  const client =
-    (url.searchParams.get("client") || "").trim() ||
-    (env.ACOUSTID_CLIENT || "").trim();
-
-  if (!fingerprint) {
-    return json({ error: "Missing fingerprint" }, 400);
-  }
-  if (!client) {
-    return json(
-      {
-        error:
-          "AcoustID client not configured. Set Worker secret ACOUSTID_CLIENT, or pass client= from Settings (free key at acoustid.org/new-application).",
-      },
-      400
-    );
-  }
-
-  const target = new URL("https://api.acoustid.org/v2/lookup");
-  target.searchParams.set("client", client);
-  target.searchParams.set("meta", "recordings+releasegroups+compress");
-  target.searchParams.set("fingerprint", fingerprint);
-  target.searchParams.set("duration", String(Math.round(Number(duration)) || 1));
-
-  try {
-    const upstream = await fetch(target.toString(), {
-      method: "GET",
-      headers: { "User-Agent": "TuneFriend/1.0 (Cloudflare Worker AcoustID)" },
-    });
-    const data = await upstream.json();
-    return new Response(JSON.stringify(data), {
-      status: upstream.status,
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "no-store",
-      },
-    });
-  } catch (e) {
-    return json(
-      { error: `AcoustID unreachable: ${e?.message || String(e)}` },
-      502
-    );
-  }
-}
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -238,10 +179,6 @@ export default {
 
     if (url.pathname === "/api/proxy") {
       return handleProxy(request, url);
-    }
-
-    if (url.pathname === "/api/acoustid") {
-      return handleAcoustId(request, url, env);
     }
 
     // Static app (SPA)

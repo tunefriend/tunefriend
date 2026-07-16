@@ -3,7 +3,7 @@
   "version": "1.6.0",
   "license": "GPL-3.0-or-later",
   "scripts": {
-    "sync:www": "rm -rf www && mkdir -p www && cp index.html manifest.json sw.js www/ && cp node_modules/@capacitor/core/dist/capacitor.js www/capacitor.js && cp -r css js icons www/ && echo v2.36 > www/VERSION.txt",
+    "sync:www": "rm -rf www && mkdir -p www && cp index.html manifest.json sw.js www/ && cp node_modules/@capacitor/core/dist/capacitor.js www/capacitor.js && cp -r css js icons www/ && echo v2.37 > www/VERSION.txt",
     "cap:sync": "npm run sync:www && npx cap sync android",
     "build:apk": "npm run cap:sync && cd android && ./gradlew assembleRelease",
     "build:apk:debug": "npm run cap:sync && cd android && ./gradlew assembleDebug",

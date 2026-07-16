@@ -13,8 +13,6 @@ const SETTINGS_KEY = "tunefriend_settings";
 const DEFAULTS = {
   shuffleDefault: false,
   bitrate: 320,
-  /** Free key from https://acoustid.org/new-application (optional if Worker proxy has one) */
-  acoustidClient: "",
 };
 
 export function loadSettings() {

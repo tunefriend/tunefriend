@@ -45,12 +45,6 @@ import {
   removeTrackFromPlaylist,
   onPlaylistsChange,
 } from "./playlists.js";
-import {
-  canIdentifyNative,
-  fingerprintFromMic,
-  lookupAcoustId,
-  matchInLibrary,
-} from "./identify.js";
 
 let api = null;
 let currentTab = "home";
@@ -728,12 +722,6 @@ async function renderHome() {
       api.getAlbumList("newest", 12),
       api.getAlbumList("random", 12),
     ]);
-    const identifyBtn = canIdentifyNative()
-      ? `<button class="quick-btn secondary" id="btn-identify" type="button">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></svg>
-          Identify
-        </button>`
-      : "";
     els.content.innerHTML = `
       <div class="quick-actions">
         <button class="quick-btn primary" id="btn-shuffle-all">
@@ -744,9 +732,7 @@ async function renderHome() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           Search
         </button>
-        ${identifyBtn}
       </div>
-      <div id="identify-panel" class="identify-panel" hidden></div>
       <div class="section-title">Recently Added</div>
       ${renderAlbumGrid(newest)}
       <div class="section-title">Discover</div>
@@ -756,91 +742,8 @@ async function renderHome() {
     attachFavoriteHandlers(els.content, [], [...newest, ...random]);
     els.content.querySelector("#btn-shuffle-all")?.addEventListener("click", shuffleAll);
     els.content.querySelector("#btn-search")?.addEventListener("click", openSearch);
-    els.content.querySelector("#btn-identify")?.addEventListener("click", runIdentify);
   } catch (e) {
     showError(e.message);
-  }
-}
-
-async function runIdentify() {
-  const panel = document.getElementById("identify-panel");
-  const btn = document.getElementById("btn-identify");
-  if (!panel || !canIdentifyNative()) {
-    showToast("Identify works in the Android app");
-    return;
-  }
-  panel.hidden = false;
-  panel.innerHTML = `<div class="identify-status"><div class="spinner"></div><span>Listening… hold near the speaker (8s)</span></div>`;
-  if (btn) btn.disabled = true;
-  try {
-    const { fingerprint, duration } = await fingerprintFromMic();
-    panel.innerHTML = `<div class="identify-status"><div class="spinner"></div><span>Looking up with AcoustID…</span></div>`;
-    const matches = await lookupAcoustId(fingerprint, duration);
-    if (!matches.length) {
-      panel.innerHTML = `<div class="identify-result empty-state">No match — try again closer to the music, or a clearer part of the song.</div>`;
-      return;
-    }
-    const top = matches[0];
-    const library = getCachedSongs();
-    const inLib = matchInLibrary(library, top);
-    let html = `
-      <div class="identify-result">
-        <div class="identify-match-title">${escapeHtml(top.title)}</div>
-        <div class="identify-match-artist">${escapeHtml(top.artist)}</div>
-        <div class="identify-score">Confidence ${Math.round((top.score || 0) * 100)}%</div>
-    `;
-    if (inLib.length) {
-      html += `
-        <div class="album-actions" style="margin-top:0.75rem">
-          <button type="button" class="quick-btn primary" id="btn-identify-play">Play from library</button>
-          <button type="button" class="quick-btn secondary" id="btn-identify-dismiss">Dismiss</button>
-        </div>
-        <p class="settings-hint" style="margin-top:0.5rem">${inLib.length} matching track${inLib.length === 1 ? "" : "s"} in your library</p>
-      `;
-    } else {
-      html += `
-        <p class="settings-hint" style="margin-top:0.75rem">Not found in your synced library. Sync Library or add the album on your server.</p>
-        <div class="album-actions">
-          <button type="button" class="quick-btn secondary" id="btn-identify-search">Search library</button>
-          <button type="button" class="quick-btn secondary" id="btn-identify-dismiss">Dismiss</button>
-        </div>
-      `;
-    }
-    // Other candidates
-    if (matches.length > 1) {
-      html += `<div class="section-title" style="margin-top:1rem">Other possible matches</div><ul class="identify-alt-list">`;
-      for (const m of matches.slice(1, 5)) {
-        html += `<li>${escapeHtml(m.title)} — <span class="text-muted">${escapeHtml(m.artist)}</span></li>`;
-      }
-      html += `</ul>`;
-    }
-    html += `</div>`;
-    panel.innerHTML = html;
-
-    panel.querySelector("#btn-identify-play")?.addEventListener("click", () => {
-      const withUrls = songsWithUrls(inLib);
-      player.play(withUrls, 0);
-      showToast(`Playing ${inLib[0].title}`);
-    });
-    panel.querySelector("#btn-identify-search")?.addEventListener("click", () => {
-      openSearch();
-      // Prefill search after render
-      setTimeout(() => {
-        const input = document.getElementById("search-input");
-        if (input) {
-          input.value = `${top.artist} ${top.title}`.trim();
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-      }, 100);
-    });
-    panel.querySelector("#btn-identify-dismiss")?.addEventListener("click", () => {
-      panel.hidden = true;
-      panel.innerHTML = "";
-    });
-  } catch (e) {
-    panel.innerHTML = `<div class="identify-result empty-state">${escapeHtml(e.message || "Identify failed")}</div>`;
-  } finally {
-    if (btn) btn.disabled = false;
   }
 }
 
@@ -1774,8 +1677,6 @@ function openSettings() {
   document.getElementById("edit-password").value = cfg?.password || "";
   document.getElementById("setting-shuffle-default").checked = !!prefs.shuffleDefault;
   document.getElementById("setting-bitrate").value = String(prefs.bitrate || 320);
-  const acoustidEl = document.getElementById("setting-acoustid-client");
-  if (acoustidEl) acoustidEl.value = prefs.acoustidClient || "";
   document.getElementById("edit-connection-panel").hidden = true;
   document.getElementById("edit-connection-error").hidden = true;
   updateLibrarySettingsUI();
@@ -1807,7 +1708,7 @@ function openExternalLink(url) {
 }
 
 function feedbackMailto() {
-  const ver = "2.36";
+  const ver = "2.37";
   const body = [
     "Device / Android version:",
     "TuneFriend version: " + ver,
@@ -1981,10 +1882,6 @@ document.getElementById("setting-bitrate").addEventListener("change", (e) => {
   showToast("Quality updated — applies to next song");
 });
 
-document.getElementById("setting-acoustid-client")?.addEventListener("change", (e) => {
-  saveSettings({ acoustidClient: String(e.target.value || "").trim() });
-  showToast("AcoustID key saved");
-});
 
 document.getElementById("btn-save-connection").addEventListener("click", async () => {
   const errEl = document.getElementById("edit-connection-error");
