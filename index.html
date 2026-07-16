@@ -177,24 +177,17 @@
         <div class="settings-group">
           <h3>About</h3>
           <div class="settings-row">
-            <span class="settings-label">App</span>
-            <span class="settings-value">TuneFriend v2.34</span>
+            <span class="settings-label">Version</span>
+            <span class="settings-value">2.35</span>
           </div>
-          <p class="settings-hint">Bugs, ideas, and “it broke on my phone” notes help a lot. Opens your email app.</p>
-          <a class="btn primary settings-btn-block" id="btn-feedback" href="mailto:tunefriend.music@proton.me?subject=TuneFriend%20feedback">Send feedback</a>
-          <div class="settings-row">
-            <span class="settings-label">Email</span>
-            <a class="settings-value settings-link" href="mailto:tunefriend.music@proton.me">tunefriend.music@proton.me</a>
+          <div class="settings-actions">
+            <button type="button" class="btn primary settings-btn-block" id="btn-feedback">Send feedback</button>
+            <button type="button" class="btn secondary settings-btn-block" id="btn-donate">Donate</button>
           </div>
-          <div class="settings-row">
-            <span class="settings-label">Donate</span>
-            <a class="settings-value settings-link" id="link-donate" href="https://liberapay.com/west66/donate" target="_blank" rel="noopener noreferrer">Liberapay</a>
-          </div>
-          <p class="settings-hint">Optional — helps with hosting, domains, and development.</p>
-          <a class="btn secondary settings-btn-block" id="btn-donate" href="https://liberapay.com/west66/donate" target="_blank" rel="noopener noreferrer">Donate on Liberapay</a>
+          <p class="settings-hint settings-hint-muted">Feedback opens your email · Donate opens Liberapay</p>
         </div>
 
-        <button class="btn danger settings-btn-block" id="btn-disconnect">Disconnect</button>
+        <button type="button" class="btn danger settings-btn-block" id="btn-disconnect">Disconnect</button>
       </div>
     </section>
 

@@ -172,6 +172,18 @@ body {
   font-weight: 600;
   cursor: pointer;
   transition: transform 0.15s, opacity 0.15s;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+a.btn {
+  text-decoration: none;
+  color: inherit;
 }
 
 .btn:active { transform: scale(0.97); }
@@ -1133,13 +1145,35 @@ body {
 
 .settings-btn-block {
   width: 100%;
-  margin-top: 0.5rem;
+  margin-top: 0;
+}
+
+.settings-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 0.85rem;
+}
+
+.settings-actions .settings-btn-block {
+  margin-top: 0;
+}
+
+.settings-hint-muted {
+  margin-top: 0.75rem;
+  text-align: center;
+  opacity: 0.85;
 }
 
 .btn.danger {
   background: transparent;
   color: #ff6b6b;
   border: 1px solid #ff6b6b;
+  margin-top: 0.25rem;
+}
+
+.settings-panel > .btn.danger {
+  margin-top: 0.5rem;
 }
 
 #screen-settings {

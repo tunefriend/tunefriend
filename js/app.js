@@ -1708,7 +1708,7 @@ function openExternalLink(url) {
 }
 
 function feedbackMailto() {
-  const ver = "2.34";
+  const ver = "2.35";
   const body = [
     "Device / Android version:",
     "TuneFriend version: " + ver,
@@ -1733,10 +1733,6 @@ document.getElementById("btn-feedback")?.addEventListener("click", (e) => {
   openExternalLink(feedbackMailto());
 });
 document.getElementById("btn-donate")?.addEventListener("click", (e) => {
-  e.preventDefault();
-  openExternalLink(DONATE_URL);
-});
-document.getElementById("link-donate")?.addEventListener("click", (e) => {
   e.preventDefault();
   openExternalLink(DONATE_URL);
 });
