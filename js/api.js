@@ -82,12 +82,31 @@ export class SubsonicAPI {
       url = `${this.serverUrl}/rest/${endpoint}?${params}`;
     }
 
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Server error: ${res.status}`);
-
-    const data = await res.json();
+    let res;
+    try {
+      res = await fetch(url);
+    } catch (e) {
+      throw new Error(e?.message || "Failed to fetch");
+    }
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      if (!res.ok) {
+        throw new Error(
+          /1003/i.test(text)
+            ? "Cloudflare blocked raw IP access. Use a hostname (e.g. music.tunefriend.org), not an IP."
+            : `Server error: ${res.status}`
+        );
+      }
+      throw new Error("Invalid response from server");
+    }
+    if (!res.ok) {
+      throw new Error(data.error || data.message || `Server error: ${res.status}`);
+    }
     const result = data["subsonic-response"];
-    if (!result) throw new Error("Invalid response from server");
+    if (!result) throw new Error(data.error || "Invalid response from server");
     if (result.status === "failed") {
       throw new Error(result.error?.message || "Request failed");
     }

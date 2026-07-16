@@ -1,0 +1,19 @@
+name = "tunefriend"
+main = "src/worker.js"
+compatibility_date = "2025-10-01"
+# Keep workers.dev URL working alongside the custom domain
+workers_dev = true
+
+# Primary public domain (share this link)
+[[routes]]
+pattern = "tunefriend.org"
+custom_domain = true
+
+[[routes]]
+pattern = "www.tunefriend.org"
+custom_domain = true
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"

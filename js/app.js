@@ -1690,20 +1690,89 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
 
 document.getElementById("btn-settings")?.addEventListener("click", openSettings);
 
+const DONATE_URL = "https://liberapay.com/west66/donate";
+function openExternalLink(url) {
+  try {
+    if (isNativeApp() && window.Capacitor?.Plugins?.App?.openUrl) {
+      window.Capacitor.Plugins.App.openUrl({ url });
+      return;
+    }
+  } catch { /* fall through */ }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+document.getElementById("btn-donate")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  openExternalLink(DONATE_URL);
+});
+document.getElementById("link-donate")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  openExternalLink(DONATE_URL);
+});
+
+function isHostedWebApp() {
+  if (isNativeApp()) return false;
+  const h = location.hostname;
+  return (
+    h.endsWith(".workers.dev") ||
+    h === "tunefriend.org" ||
+    h === "www.tunefriend.org" ||
+    (location.protocol === "https:" && h !== "localhost" && h !== "127.0.0.1")
+  );
+}
+
+function looksLikeRawIpUrl(urlStr) {
+  try {
+    const u = new URL(urlStr.includes("://") ? urlStr : `http://${urlStr}`);
+    const host = u.hostname.replace(/^\[|\]$/g, "");
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":");
+  } catch {
+    return false;
+  }
+}
+
+function friendlyLoginError(err, { useProxy, serverUrl } = {}) {
+  const msg = String(err?.message || err || "");
+  if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+    if (location.protocol === "https:" && /^http:/i.test(serverUrl || "")) {
+      return "This site is HTTPS but your server is HTTP. Turn ON “Use built-in proxy”, or use an https:// server URL.";
+    }
+    if (!useProxy) {
+      return "Connection blocked (CORS/network). Turn ON “Use built-in proxy” and try again.";
+    }
+    if (looksLikeRawIpUrl(serverUrl)) {
+      return "Cloudflare cannot use a raw IP. Create DNS A record music.tunefriend.org → your IP (Proxy OFF), then use http://music.tunefriend.org:4533 with proxy ON.";
+    }
+    return "Could not reach the music server. Check URL, proxy, and that the server is online.";
+  }
+  if (/1003|raw ip|raw IP/i.test(msg)) {
+    return "Cloudflare cannot use a raw IP. Use a hostname (e.g. http://music.tunefriend.org:4533) with proxy ON.";
+  }
+  return msg || "Could not connect. Check URL and credentials.";
+}
+
 els.loginForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   els.loginError.hidden = true;
   els.loginBtn.disabled = true;
   els.loginBtn.textContent = "Connecting…";
 
+  // On Cloudflare HTTPS, proxy is required for HTTP music servers / CORS
+  const proxyEl = document.getElementById("use-proxy");
+  if (isHostedWebApp() && proxyEl) proxyEl.checked = true;
+
   const config = {
-    serverUrl: document.getElementById("server-url").value,
+    serverUrl: document.getElementById("server-url").value.trim(),
     username: document.getElementById("username").value,
     password: document.getElementById("password").value,
     useProxy: document.getElementById("use-proxy").checked,
   };
 
   try {
+    if (isHostedWebApp() && looksLikeRawIpUrl(config.serverUrl)) {
+      throw new Error(
+        "Cloudflare cannot connect to a raw IP. In Cloudflare → DNS add: music → A → your server IP, Proxy OFF (grey cloud). Then Server URL: http://music.tunefriend.org:4533"
+      );
+    }
     const testApi = new SubsonicAPI(config);
     await testApi.ping();
     api = testApi;
@@ -1716,7 +1785,7 @@ els.loginForm.addEventListener("submit", async (e) => {
     await restorePlayback();
     switchTab("home");
   } catch (err) {
-    els.loginError.textContent = err.message || "Could not connect. Check URL and credentials.";
+    els.loginError.textContent = friendlyLoginError(err, config);
     els.loginError.hidden = false;
   } finally {
     els.loginBtn.disabled = false;
@@ -1824,10 +1893,17 @@ document.getElementById("btn-disconnect").addEventListener("click", () => {
 });
 
 function setupNativeUI() {
-  if (!isNativeApp()) return;
-  const proxyRow = document.querySelector(".checkbox-row");
-  if (proxyRow) proxyRow.hidden = true;
-  document.getElementById("use-proxy").checked = false;
+  if (isNativeApp()) {
+    const proxyRow = document.querySelector(".checkbox-row");
+    if (proxyRow) proxyRow.hidden = true;
+    document.getElementById("use-proxy").checked = false;
+    return;
+  }
+  // Browser on Cloudflare / HTTPS: keep proxy on by default
+  if (isHostedWebApp()) {
+    const proxy = document.getElementById("use-proxy");
+    if (proxy) proxy.checked = true;
+  }
 }
 
 function enrichSong(song, { transcode = false } = {}) {

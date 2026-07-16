@@ -19,3 +19,5 @@ android/keystore.properties
 android/*.keystore
 android/*.jks
 tunefriend-release-signing-backup.txt
+public/
+.wrangler/

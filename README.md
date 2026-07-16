@@ -1,13 +1,16 @@
 # TuneFriend
 
-Stream music from a friend's self-hosted Subsonic server (Navidrome, Airsonic, Gonic, etc.) on Android.
+Stream music from a friend's self-hosted Subsonic server (Navidrome, Airsonic, Gonic, etc.) on Android — and on the web.
 
-**Latest release:** [v2.27](https://github.com/tunefriend/tunefriend/releases/latest)
+**Latest release:** [v2.32](https://github.com/tunefriend/tunefriend/releases/latest)
 
 **F-Droid:** [com.tunefriend.app](https://f-droid.org/en/packages/com.tunefriend.app/)
 
+**Web (Cloudflare, always online):** **https://tunefriend.org**
+
 ## Install
 
+### Android
 1. Prefer **[F-Droid](https://f-droid.org/en/packages/com.tunefriend.app/)** for automatic updates, or download the APK from [GitHub Releases](https://github.com/tunefriend/tunefriend/releases/latest)
 2. Install on Android (allow installs from unknown sources if prompted)
 3. Enter your friend's server URL, username, and password
@@ -15,10 +18,16 @@ Stream music from a friend's self-hosted Subsonic server (Navidrome, Airsonic, G
 
 > **Note:** GitHub and F-Droid builds are **release-signed**. If you previously installed an old **debug** APK, uninstall it first, then install the release build.
 
+### Web
+Open **https://tunefriend.org** in any browser.  
+Your music server must be reachable from the internet (public HTTPS or tunnel) — private `192.168.x.x` URLs only work with the local desktop server (`./start.sh` on your PC).
+
+See [DEPLOY.md](DEPLOY.md) for redeploying to Cloudflare (same account as oncall-scheduler).
+
 ## Share with friends
 
-- Send them the [latest release](https://github.com/tunefriend/tunefriend/releases/latest), or
-- Point them at the [F-Droid listing](https://f-droid.org/en/packages/com.tunefriend.app/)
+- **Web:** https://tunefriend.org  
+- **Android:** [latest release](https://github.com/tunefriend/tunefriend/releases/latest) or [F-Droid](https://f-droid.org/en/packages/com.tunefriend.app/)
 
 ## Contact
 
