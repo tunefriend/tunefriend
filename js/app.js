@@ -340,30 +340,51 @@ function bindListData(container, songs = [], albums = []) {
   setupContentDelegation(container);
 }
 
+function songIdEq(a, b) {
+  return a != null && b != null && String(a) === String(b);
+}
+
+function findListSong(container, id) {
+  return container?._listSongs?.find((s) => songIdEq(s.id, id)) || null;
+}
+
+function findListAlbum(container, id) {
+  return container?._listAlbums?.find((a) => songIdEq(a.id, id)) || null;
+}
+
 function setupContentDelegation(container) {
   if (container._delegated) return;
   container._delegated = true;
   container.addEventListener("click", (e) => {
     const upBtn = e.target.closest("[data-rate-up]");
     if (upBtn) {
+      e.preventDefault();
       e.stopPropagation();
-      const song = container._listSongs?.find((s) => s.id === upBtn.dataset.rateUp);
-      if (!song) return;
+      const song = findListSong(container, upBtn.dataset.rateUp);
+      if (!song) {
+        showToast("Could not rate — try again");
+        return;
+      }
       handleSongThumbsUp(song, container);
       return;
     }
     const downBtn = e.target.closest("[data-rate-down]");
     if (downBtn) {
+      e.preventDefault();
       e.stopPropagation();
-      const song = container._listSongs?.find((s) => s.id === downBtn.dataset.rateDown);
-      if (!song) return;
+      const song = findListSong(container, downBtn.dataset.rateDown);
+      if (!song) {
+        showToast("Could not rate — try again");
+        return;
+      }
       handleSongThumbsDown(song, container);
       return;
     }
     const favAlbum = e.target.closest("[data-fav-album]");
     if (favAlbum) {
+      e.preventDefault();
       e.stopPropagation();
-      const album = container._listAlbums?.find((a) => a.id === favAlbum.dataset.favAlbum);
+      const album = findListAlbum(container, favAlbum.dataset.favAlbum);
       if (!album) return;
       const added = toggleAlbumFavorite(album);
       favAlbum.classList.toggle("active", added);
@@ -403,69 +424,47 @@ function attachAlbumClicks(container, fromScreen) {
   });
 }
 
-function refreshSongRateButtons(container, songId) {
-  const wrap = container?.querySelector(`[data-rate-up="${songId}"]`)?.closest(".rate-btns");
-  if (!wrap) return;
-  const rating = getSongRating(songId);
-  const up = wrap.querySelector("[data-rate-up]");
-  const down = wrap.querySelector("[data-rate-down]");
-  if (up) {
-    up.classList.toggle("active", rating === "up");
-    up.innerHTML = thumbsUpSvg(rating === "up");
-  }
-  if (down) {
-    down.classList.toggle("active", rating === "down");
-    down.innerHTML = thumbsDownSvg(rating === "down");
-  }
+function refreshAllRateButtonsForSong(songId) {
+  const want = String(songId);
+  const rating = getSongRating(want);
+  document.querySelectorAll(".rate-btns").forEach((wrap) => {
+    const up = wrap.querySelector("[data-rate-up]");
+    const down = wrap.querySelector("[data-rate-down]");
+    const id = up?.dataset?.rateUp;
+    if (id == null || String(id) !== want) return;
+    if (up) {
+      up.classList.toggle("active", rating === "up");
+      up.innerHTML = thumbsUpSvg(rating === "up");
+    }
+    if (down) {
+      down.classList.toggle("active", rating === "down");
+      down.innerHTML = thumbsDownSvg(rating === "down");
+    }
+  });
 }
 
 function handleSongThumbsUp(song, container) {
+  if (!song?.id) {
+    showToast("No song to rate");
+    return;
+  }
   const result = setSongThumbsUp(song);
-  if (container) refreshSongRateButtons(container, song.id);
-  // Refresh all visible lists + player chrome
-  document.querySelectorAll(".rate-btns").forEach((wrap) => {
-    const id = wrap.querySelector("[data-rate-up]")?.dataset?.rateUp;
-    if (id === song.id) {
-      const rating = getSongRating(song.id);
-      const up = wrap.querySelector("[data-rate-up]");
-      const down = wrap.querySelector("[data-rate-down]");
-      if (up) {
-        up.classList.toggle("active", rating === "up");
-        up.innerHTML = thumbsUpSvg(rating === "up");
-      }
-      if (down) {
-        down.classList.toggle("active", rating === "down");
-        down.innerHTML = thumbsDownSvg(rating === "down");
-      }
-    }
-  });
+  refreshAllRateButtonsForSong(song.id);
   updatePlayingRating(player.current);
   showToast(result === "up" ? "Liked" : "Like removed");
 }
 
 function handleSongThumbsDown(song, container) {
+  if (!song?.id) {
+    showToast("No song to rate");
+    return;
+  }
   const result = setSongThumbsDown(song);
-  document.querySelectorAll(".rate-btns").forEach((wrap) => {
-    const id = wrap.querySelector("[data-rate-up]")?.dataset?.rateUp;
-    if (id === song.id) {
-      const rating = getSongRating(song.id);
-      const up = wrap.querySelector("[data-rate-up]");
-      const down = wrap.querySelector("[data-rate-down]");
-      if (up) {
-        up.classList.toggle("active", rating === "up");
-        up.innerHTML = thumbsUpSvg(rating === "up");
-      }
-      if (down) {
-        down.classList.toggle("active", rating === "down");
-        down.innerHTML = thumbsDownSvg(rating === "down");
-      }
-    }
-  });
+  refreshAllRateButtonsForSong(song.id);
   updatePlayingRating(player.current);
   if (result === "down") {
     showToast("Won't play again on this device");
-    // Skip if this is the current track
-    if (player.current?.id === song.id) {
+    if (songIdEq(player.current?.id, song.id)) {
       try {
         player.next();
       } catch {
@@ -475,46 +474,13 @@ function handleSongThumbsDown(song, container) {
   } else {
     showToast("Unblocked — can play again");
   }
-  // Settings blocked list may be open
   renderBlockedSettingsList();
 }
 
 function attachFavoriteHandlers(container, songs = [], albums = []) {
-  if (songs.length > 30 || albums.length > 30) {
-    bindListData(container, songs, albums);
-    return;
-  }
-  const songMap = new Map(songs.map((s) => [s.id, s]));
-  const albumMap = new Map(albums.map((a) => [a.id, a]));
-
-  container.querySelectorAll("[data-rate-up]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const song = songMap.get(btn.dataset.rateUp);
-      if (!song) return;
-      handleSongThumbsUp(song, container);
-    });
-  });
-  container.querySelectorAll("[data-rate-down]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const song = songMap.get(btn.dataset.rateDown);
-      if (!song) return;
-      handleSongThumbsDown(song, container);
-    });
-  });
-
-  container.querySelectorAll("[data-fav-album]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const album = albumMap.get(btn.dataset.favAlbum);
-      if (!album) return;
-      const added = toggleAlbumFavorite(album);
-      btn.classList.toggle("active", added);
-      btn.innerHTML = thumbsUpSvg(added);
-      showToast(added ? "Liked album" : "Removed album like");
-    });
-  });
+  // Single path: delegated clicks + string id match (avoids double-handlers and
+  // number-vs-string Subsonic id bugs with HTML data-* attributes).
+  bindListData(container, songs, albums);
 }
 
 function attachSongClicks(container, songs) {
@@ -544,8 +510,9 @@ function highlightPlaying() {
   const prev = els.content.querySelector(".song-item.playing");
   prev?.classList.remove("playing");
   const id = player.current?.id;
-  if (!id) return;
-  els.content.querySelector(`.song-item[data-song-id="${id}"]`)?.classList.add("playing");
+  if (id == null) return;
+  // Attribute selector — string match for numeric ids
+  els.content.querySelector(`.song-item[data-song-id="${CSS.escape?.(String(id)) ?? String(id)}"]`)?.classList.add("playing");
 }
 
 function updatePlayingRating(song) {
@@ -569,23 +536,34 @@ function updatePlayingRating(song) {
 }
 
 function onPlayingThumbsUp(e) {
+  e?.preventDefault?.();
   e?.stopPropagation?.();
   const song = player.current;
-  if (!song) return;
+  if (!song?.id) {
+    showToast("Play a song first");
+    return;
+  }
   handleSongThumbsUp(song);
 }
 
 function onPlayingThumbsDown(e) {
+  e?.preventDefault?.();
   e?.stopPropagation?.();
   const song = player.current;
-  if (!song) return;
+  if (!song?.id) {
+    showToast("Play a song first");
+    return;
+  }
   handleSongThumbsDown(song);
 }
 
-document.getElementById("np-thumb-up")?.addEventListener("click", onPlayingThumbsUp);
-document.getElementById("np-thumb-down")?.addEventListener("click", onPlayingThumbsDown);
-document.getElementById("btn-thumb-up")?.addEventListener("click", onPlayingThumbsUp);
-document.getElementById("btn-thumb-down")?.addEventListener("click", onPlayingThumbsDown);
+// Capture phase so mini-player thumbs win over parent handlers
+for (const id of ["np-thumb-up", "np-thumb-down", "btn-thumb-up", "btn-thumb-down"]) {
+  const el = document.getElementById(id);
+  if (!el) continue;
+  const handler = id.endsWith("down") ? onPlayingThumbsDown : onPlayingThumbsUp;
+  el.addEventListener("click", handler, true);
+}
 
 const _origTrackChange = player.onTrackChange;
 player.onTrackChange = (song) => {
@@ -1822,7 +1800,7 @@ function openExternalLink(url) {
 }
 
 function feedbackMailto() {
-  const ver = "2.38";
+  const ver = "2.39";
   const body = [
     "Device / Android version:",
     "TuneFriend version: " + ver,

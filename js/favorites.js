@@ -61,9 +61,14 @@ export function onRatingsChange(cb) {
   return onFavoritesChange(cb);
 }
 
+/** Always string keys — HTML data-* and localStorage object keys are strings. */
+function sid(id) {
+  return id == null ? "" : String(id);
+}
+
 function songRecord(song) {
   return {
-    id: song.id,
+    id: sid(song.id),
     title: song.title,
     artist: song.artist,
     artistId: song.artistId,
@@ -78,11 +83,13 @@ function songRecord(song) {
 }
 
 export function isSongLiked(id) {
-  return !!loadRaw().liked[id];
+  const k = sid(id);
+  return !!k && !!loadRaw().liked[k];
 }
 
 export function isSongBlocked(id) {
-  return !!loadRaw().blocked[id];
+  const k = sid(id);
+  return !!k && !!loadRaw().blocked[k];
 }
 
 /** @deprecated use isSongLiked */
@@ -91,7 +98,8 @@ export function isSongFavorite(id) {
 }
 
 export function isAlbumFavorite(id) {
-  return !!loadRaw().albums[id];
+  const k = sid(id);
+  return !!k && !!loadRaw().albums[k];
 }
 
 /**
@@ -100,15 +108,16 @@ export function isAlbumFavorite(id) {
  * @returns {"up"|"none"}
  */
 export function setSongThumbsUp(song) {
-  if (!song?.id) return "none";
+  const id = sid(song?.id);
+  if (!id) return "none";
   const data = loadRaw();
-  if (data.liked[song.id]) {
-    delete data.liked[song.id];
+  if (data.liked[id]) {
+    delete data.liked[id];
     saveRaw(data);
     return "none";
   }
-  delete data.blocked[song.id];
-  data.liked[song.id] = songRecord(song);
+  delete data.blocked[id];
+  data.liked[id] = songRecord(song);
   saveRaw(data);
   return "up";
 }
@@ -119,31 +128,35 @@ export function setSongThumbsUp(song) {
  * @returns {"down"|"none"}
  */
 export function setSongThumbsDown(song) {
-  if (!song?.id) return "none";
+  const id = sid(song?.id);
+  if (!id) return "none";
   const data = loadRaw();
-  if (data.blocked[song.id]) {
-    delete data.blocked[song.id];
+  if (data.blocked[id]) {
+    delete data.blocked[id];
     saveRaw(data);
     return "none";
   }
-  delete data.liked[song.id];
-  data.blocked[song.id] = songRecord(song);
+  delete data.liked[id];
+  data.blocked[id] = songRecord(song);
   saveRaw(data);
   return "down";
 }
 
 /** @returns {"up"|"down"|"none"} */
 export function getSongRating(id) {
+  const k = sid(id);
+  if (!k) return "none";
   const data = loadRaw();
-  if (data.liked[id]) return "up";
-  if (data.blocked[id]) return "down";
+  if (data.liked[k]) return "up";
+  if (data.blocked[k]) return "down";
   return "none";
 }
 
 export function unblockSong(id) {
+  const k = sid(id);
   const data = loadRaw();
-  if (!data.blocked[id]) return false;
-  delete data.blocked[id];
+  if (!k || !data.blocked[k]) return false;
+  delete data.blocked[k];
   saveRaw(data);
   return true;
 }
@@ -197,18 +210,23 @@ export function blockedSongCount() {
 
 export function filterPlayableSongs(songs) {
   const data = loadRaw();
-  return (songs || []).filter((s) => s?.id && !data.blocked[s.id]);
+  return (songs || []).filter((s) => {
+    const id = sid(s?.id);
+    return id && !data.blocked[id];
+  });
 }
 
 export function toggleAlbumFavorite(album) {
+  const id = sid(album?.id);
+  if (!id) return false;
   const data = loadRaw();
-  if (data.albums[album.id]) {
-    delete data.albums[album.id];
+  if (data.albums[id]) {
+    delete data.albums[id];
     saveRaw(data);
     return false;
   }
-  data.albums[album.id] = {
-    id: album.id,
+  data.albums[id] = {
+    id,
     name: album.name,
     artist: album.artist,
     artistId: album.artistId,
@@ -226,8 +244,9 @@ export function addSongFavorites(songs) {
   const data = loadRaw();
   let added = 0;
   for (const song of songs) {
-    if (!song?.id || data.liked[song.id] || data.blocked[song.id]) continue;
-    data.liked[song.id] = songRecord(song);
+    const id = sid(song?.id);
+    if (!id || data.liked[id] || data.blocked[id]) continue;
+    data.liked[id] = songRecord(song);
     added++;
   }
   if (added === 0) return 0;
@@ -243,8 +262,9 @@ export function replaceSongFavorites(songs) {
   const data = loadRaw();
   data.liked = {};
   for (const song of songs || []) {
-    if (!song?.id || data.blocked[song.id]) continue;
-    data.liked[song.id] = songRecord(song);
+    const id = sid(song?.id);
+    if (!id || data.blocked[id]) continue;
+    data.liked[id] = songRecord(song);
   }
   try {
     saveRaw(data);
@@ -283,11 +303,14 @@ export function favoriteHeartSvg(active) {
 }
 
 export function songRateButtonsHtml(songId) {
-  const rating = getSongRating(songId);
+  const id = sid(songId);
+  const rating = getSongRating(id);
+  // Escape quotes for attribute safety
+  const attr = id.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
   return `
     <div class="rate-btns">
-      <button type="button" class="rate-btn up${rating === "up" ? " active" : ""}" data-rate-up="${songId}" aria-label="Thumbs up" title="Like">${thumbsUpSvg(rating === "up")}</button>
-      <button type="button" class="rate-btn down${rating === "down" ? " active" : ""}" data-rate-down="${songId}" aria-label="Thumbs down" title="Never play">${thumbsDownSvg(rating === "down")}</button>
+      <button type="button" class="rate-btn up${rating === "up" ? " active" : ""}" data-rate-up="${attr}" aria-label="Thumbs up" title="Like">${thumbsUpSvg(rating === "up")}</button>
+      <button type="button" class="rate-btn down${rating === "down" ? " active" : ""}" data-rate-down="${attr}" aria-label="Thumbs down" title="Never play">${thumbsDownSvg(rating === "down")}</button>
     </div>
   `;
 }
