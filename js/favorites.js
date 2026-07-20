@@ -1,36 +1,54 @@
 /*
- * TuneFriend
+ * TuneFriend — song ratings (thumbs up / thumbs down)
  * Copyright (C) 2026 James
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Thumbs up  = liked (replaces old favorites)
+ * Thumbs down = blocked — never auto-play on this device
+ *
+ * Fresh start: clears legacy favorites storage on first load.
  */
 
-const FAVORITES_KEY = "tunefriend_favorites";
-
-const DEFAULTS = {
-  songs: {},
-  albums: {},
-};
+const RATINGS_KEY = "tunefriend_ratings_v1";
+const LEGACY_FAVORITES_KEY = "tunefriend_favorites";
 
 const listeners = new Set();
 
+function emptyData() {
+  return { liked: {}, blocked: {}, albums: {} };
+}
+
+/** Wipe old hearts/favorites once so we start clean with thumbs. */
+function migrateFresh() {
+  try {
+    if (localStorage.getItem(LEGACY_FAVORITES_KEY) != null) {
+      localStorage.removeItem(LEGACY_FAVORITES_KEY);
+    }
+    // One-time flag so we don't keep wiping if user had empty ratings
+    if (!localStorage.getItem(RATINGS_KEY)) {
+      localStorage.setItem(RATINGS_KEY, JSON.stringify(emptyData()));
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+migrateFresh();
+
 function loadRaw() {
   try {
-    const data = JSON.parse(localStorage.getItem(FAVORITES_KEY));
+    const data = JSON.parse(localStorage.getItem(RATINGS_KEY));
     return {
-      songs: data?.songs && typeof data.songs === "object" ? data.songs : {},
+      liked: data?.liked && typeof data.liked === "object" ? data.liked : {},
+      blocked: data?.blocked && typeof data.blocked === "object" ? data.blocked : {},
       albums: data?.albums && typeof data.albums === "object" ? data.albums : {},
     };
   } catch {
-    return { ...DEFAULTS, songs: {}, albums: {} };
+    return emptyData();
   }
 }
 
 function saveRaw(data) {
-  localStorage.setItem(FAVORITES_KEY, JSON.stringify(data));
+  localStorage.setItem(RATINGS_KEY, JSON.stringify(data));
   listeners.forEach((cb) => cb());
 }
 
@@ -39,15 +57,11 @@ export function onFavoritesChange(cb) {
   return () => listeners.delete(cb);
 }
 
-export function isSongFavorite(id) {
-  return !!loadRaw().songs[id];
+export function onRatingsChange(cb) {
+  return onFavoritesChange(cb);
 }
 
-export function isAlbumFavorite(id) {
-  return !!loadRaw().albums[id];
-}
-
-function songFavoriteRecord(song) {
+function songRecord(song) {
   return {
     id: song.id,
     title: song.title,
@@ -63,62 +77,127 @@ function songFavoriteRecord(song) {
   };
 }
 
-export function toggleSongFavorite(song) {
+export function isSongLiked(id) {
+  return !!loadRaw().liked[id];
+}
+
+export function isSongBlocked(id) {
+  return !!loadRaw().blocked[id];
+}
+
+/** @deprecated use isSongLiked */
+export function isSongFavorite(id) {
+  return isSongLiked(id);
+}
+
+export function isAlbumFavorite(id) {
+  return !!loadRaw().albums[id];
+}
+
+/**
+ * Set thumbs up. Clears thumbs down for that song.
+ * Toggle off if already liked.
+ * @returns {"up"|"none"}
+ */
+export function setSongThumbsUp(song) {
+  if (!song?.id) return "none";
   const data = loadRaw();
-  if (data.songs[song.id]) {
-    delete data.songs[song.id];
+  if (data.liked[song.id]) {
+    delete data.liked[song.id];
     saveRaw(data);
-    return false;
+    return "none";
   }
-  data.songs[song.id] = songFavoriteRecord(song);
+  delete data.blocked[song.id];
+  data.liked[song.id] = songRecord(song);
+  saveRaw(data);
+  return "up";
+}
+
+/**
+ * Set thumbs down (do not play). Clears thumbs up.
+ * Toggle off if already blocked.
+ * @returns {"down"|"none"}
+ */
+export function setSongThumbsDown(song) {
+  if (!song?.id) return "none";
+  const data = loadRaw();
+  if (data.blocked[song.id]) {
+    delete data.blocked[song.id];
+    saveRaw(data);
+    return "none";
+  }
+  delete data.liked[song.id];
+  data.blocked[song.id] = songRecord(song);
+  saveRaw(data);
+  return "down";
+}
+
+/** @returns {"up"|"down"|"none"} */
+export function getSongRating(id) {
+  const data = loadRaw();
+  if (data.liked[id]) return "up";
+  if (data.blocked[id]) return "down";
+  return "none";
+}
+
+export function unblockSong(id) {
+  const data = loadRaw();
+  if (!data.blocked[id]) return false;
+  delete data.blocked[id];
   saveRaw(data);
   return true;
 }
 
-/** Bulk-add songs to favorites (skips ones already favorited). Returns how many were new. */
-export function addSongFavorites(songs) {
-  if (!songs?.length) return 0;
+export function clearAllBlocked() {
   const data = loadRaw();
-  let added = 0;
-  for (const song of songs) {
-    if (!song?.id || data.songs[song.id]) continue;
-    data.songs[song.id] = songFavoriteRecord(song);
-    added++;
-  }
-  if (added === 0) return 0;
-  try {
-    saveRaw(data);
-    return added;
-  } catch {
-    // localStorage quota — keep existing favorites, report partial failure
-    return -1;
-  }
-}
-
-/** Replace all song favorites with this list (keeps album favorites). Returns count saved. */
-export function replaceSongFavorites(songs) {
-  const data = loadRaw();
-  data.songs = {};
-  for (const song of songs || []) {
-    if (!song?.id) continue;
-    data.songs[song.id] = songFavoriteRecord(song);
-  }
-  try {
-    saveRaw(data);
-    return Object.keys(data.songs).length;
-  } catch {
-    return -1;
-  }
-}
-
-export function clearSongFavorites() {
-  const data = loadRaw();
-  data.songs = {};
+  data.blocked = {};
   saveRaw(data);
 }
 
+export function clearAllLiked() {
+  const data = loadRaw();
+  data.liked = {};
+  saveRaw(data);
+}
+
+/** Full reset of ratings on this device */
+export function clearAllRatings() {
+  saveRaw(emptyData());
+  try {
+    localStorage.removeItem(LEGACY_FAVORITES_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function getLikedSongs() {
+  return Object.values(loadRaw().liked);
+}
+
+export function getBlockedSongs() {
+  return Object.values(loadRaw().blocked);
+}
+
+/** @deprecated use getLikedSongs */
+export function getFavoriteSongs() {
+  return getLikedSongs();
+}
+
+export function getFavoriteAlbums() {
+  return Object.values(loadRaw().albums);
+}
+
 export function favoriteSongCount() {
-  return Object.keys(loadRaw().songs).length;
+  return Object.keys(loadRaw().liked).length;
+}
+
+export function blockedSongCount() {
+  return Object.keys(loadRaw().blocked).length;
+}
+
+export function filterPlayableSongs(songs) {
+  const data = loadRaw();
+  return (songs || []).filter((s) => s?.id && !data.blocked[s.id]);
 }
 
 export function toggleAlbumFavorite(album) {
@@ -141,17 +220,74 @@ export function toggleAlbumFavorite(album) {
   return true;
 }
 
-export function getFavoriteSongs() {
-  return Object.values(loadRaw().songs);
-}
-
-export function getFavoriteAlbums() {
-  return Object.values(loadRaw().albums);
-}
-
-export function favoriteHeartSvg(active) {
-  if (active) {
-    return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>`;
+/** Bulk thumbs-up (liked). Skips blocked. */
+export function addSongFavorites(songs) {
+  if (!songs?.length) return 0;
+  const data = loadRaw();
+  let added = 0;
+  for (const song of songs) {
+    if (!song?.id || data.liked[song.id] || data.blocked[song.id]) continue;
+    data.liked[song.id] = songRecord(song);
+    added++;
   }
-  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`;
+  if (added === 0) return 0;
+  try {
+    saveRaw(data);
+    return added;
+  } catch {
+    return -1;
+  }
+}
+
+export function replaceSongFavorites(songs) {
+  const data = loadRaw();
+  data.liked = {};
+  for (const song of songs || []) {
+    if (!song?.id || data.blocked[song.id]) continue;
+    data.liked[song.id] = songRecord(song);
+  }
+  try {
+    saveRaw(data);
+    return Object.keys(data.liked).length;
+  } catch {
+    return -1;
+  }
+}
+
+export function clearSongFavorites() {
+  clearAllLiked();
+}
+
+/** @deprecated */
+export function toggleSongFavorite(song) {
+  return setSongThumbsUp(song) === "up";
+}
+
+export function thumbsUpSvg(active) {
+  if (active) {
+    return `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2 20h2c.55 0 1-.45 1-1v-9c0-.55-.45-1-1-1H2v11zm19.83-7.12c.11-.25.17-.52.17-.8V11c0-1.1-.9-2-2-2h-5.5l.92-4.65c.05-.22.02-.46-.08-.66-.23-.45-.52-.86-.88-1.22L14 2 7.59 8.41C7.21 8.79 7 9.3 7 9.83v7.84C7 18.95 8.05 20 9.34 20h8.11c.7 0 1.36-.37 1.72-.97l2.66-6.15z"/></svg>`;
+  }
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>`;
+}
+
+export function thumbsDownSvg(active) {
+  if (active) {
+    return `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M22 4h-2c-.55 0-1 .45-1 1v9c0 .55.45 1 1 1h2V4zM2.17 11.12c-.11.25-.17.52-.17.8V13c0 1.1.9 2 2 2h5.5l-.92 4.65c-.05.22-.02.46.08.66.23.45.52.86.88 1.22L10 22l6.41-6.41c.38-.38.59-.89.59-1.42V6.34C17 5.05 15.95 4 14.66 4H6.55c-.7 0-1.36.37-1.72.97l-2.66 6.15z"/></svg>`;
+  }
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>`;
+}
+
+/** @deprecated */
+export function favoriteHeartSvg(active) {
+  return thumbsUpSvg(active);
+}
+
+export function songRateButtonsHtml(songId) {
+  const rating = getSongRating(songId);
+  return `
+    <div class="rate-btns">
+      <button type="button" class="rate-btn up${rating === "up" ? " active" : ""}" data-rate-up="${songId}" aria-label="Thumbs up" title="Like">${thumbsUpSvg(rating === "up")}</button>
+      <button type="button" class="rate-btn down${rating === "down" ? " active" : ""}" data-rate-down="${songId}" aria-label="Thumbs down" title="Never play">${thumbsDownSvg(rating === "down")}</button>
+    </div>
+  `;
 }

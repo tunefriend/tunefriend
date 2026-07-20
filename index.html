@@ -56,9 +56,9 @@
         </button>
         <h2 id="page-title">Home</h2>
         <div class="top-bar-actions">
-          <button class="settings-btn" id="btn-favorites" aria-label="Favorites">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
-            <span>Favorites</span>
+          <button class="settings-btn" id="btn-favorites" aria-label="Liked">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+            <span>Liked</span>
           </button>
           <button class="settings-btn" id="btn-playlists" aria-label="Playlists">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
@@ -74,13 +74,13 @@
       <main id="content" class="content"></main>
     </section>
 
-    <!-- Favorites -->
+    <!-- Liked (thumbs up) -->
     <section id="screen-favorites" class="screen">
       <header class="top-bar">
         <button class="icon-btn" id="btn-back-favorites" aria-label="Back">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
         </button>
-        <h2>Favorites</h2>
+        <h2>Liked</h2>
         <div class="top-bar-spacer" aria-hidden="true"></div>
       </header>
       <div id="favorites-content" class="favorites-panel"></div>
@@ -175,10 +175,25 @@
         </div>
 
         <div class="settings-group">
+          <h3>Thumbs up / down</h3>
+          <p class="settings-hint">👍 Like (Liked screen) · 👎 Never play on this device. Old hearts &amp; bulk blocklists were cleared for a fresh start.</p>
+          <div class="settings-row">
+            <span class="settings-label">Blocked songs</span>
+            <span class="settings-value" id="blocked-songs-count">0</span>
+          </div>
+          <div id="blocked-songs-list" class="blocked-songs-wrap"></div>
+          <div class="settings-actions">
+            <button type="button" class="btn secondary settings-btn-block" id="btn-clear-blocked">Clear all blocked</button>
+            <button type="button" class="btn secondary settings-btn-block" id="btn-clear-liked">Clear all likes</button>
+            <button type="button" class="btn danger settings-btn-block" id="btn-reset-ratings">Reset all ratings</button>
+          </div>
+        </div>
+
+        <div class="settings-group">
           <h3>About</h3>
           <div class="settings-row">
             <span class="settings-label">Version</span>
-            <span class="settings-value">2.37</span>
+            <span class="settings-value">2.38</span>
           </div>
           <div class="settings-actions">
             <button type="button" class="btn primary settings-btn-block" id="btn-feedback">Send feedback</button>
@@ -201,9 +216,14 @@
             <span id="np-artist" class="np-artist">—</span>
           </div>
         </button>
-        <button class="fav-btn np-fav" id="np-fav" aria-label="Favorite song" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
-        </button>
+        <div class="rate-btns np-rate">
+          <button type="button" class="rate-btn up" id="np-thumb-up" aria-label="Thumbs up" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+          </button>
+          <button type="button" class="rate-btn down" id="np-thumb-down" aria-label="Thumbs down" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>
+          </button>
+        </div>
         <button class="icon-btn" id="np-play" aria-label="Play/Pause">
           <svg id="np-icon-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
           <svg id="np-icon-pause" viewBox="0 0 24 24" fill="currentColor" hidden><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>
@@ -236,9 +256,14 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
         </button>
         <span class="player-label">Now Playing</span>
-        <button class="fav-btn player-fav" id="btn-fav" aria-label="Favorite song" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
-        </button>
+        <div class="rate-btns player-rate">
+          <button type="button" class="rate-btn up" id="btn-thumb-up" aria-label="Thumbs up" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+          </button>
+          <button type="button" class="rate-btn down" id="btn-thumb-down" aria-label="Thumbs down" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>
+          </button>
+        </div>
       </header>
       <div class="player-body">
         <img id="player-art" class="player-art" alt="" />

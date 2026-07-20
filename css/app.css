@@ -518,7 +518,14 @@ a.btn {
   flex-shrink: 0;
 }
 
-.fav-btn {
+.rate-btns {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+
+.rate-btn {
   background: none;
   border: none;
   color: var(--text-muted);
@@ -532,23 +539,50 @@ a.btn {
   transition: color 0.15s, transform 0.15s;
 }
 
-.fav-btn svg {
+.rate-btn svg {
   width: 18px;
   height: 18px;
 }
 
-.fav-btn:active {
+.rate-btn:active {
   transform: scale(0.9);
 }
 
-.fav-btn.active {
+.rate-btn.up.active {
+  color: var(--accent);
+}
+
+.rate-btn.down.active {
   color: var(--accent-2);
+}
+
+.rate-btn:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* legacy class kept for album overlays */
+.fav-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .album-fav {
   background: rgba(10, 10, 15, 0.65);
   backdrop-filter: blur(4px);
   padding: 6px;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
 }
 
 .album-fav svg {
@@ -772,24 +806,70 @@ a.btn {
   text-overflow: ellipsis;
 }
 
-.now-playing .np-fav svg {
+.now-playing .np-rate .rate-btn svg {
   width: 20px;
   height: 20px;
 }
 
-.now-playing .np-fav:disabled {
-  opacity: 0.35;
-  pointer-events: none;
-}
-
-.player-fav svg {
+.player-rate .rate-btn svg {
   width: 22px;
   height: 22px;
 }
 
-.player-fav:disabled {
-  opacity: 0.35;
-  pointer-events: none;
+.blocked-songs-wrap {
+  margin: 0.5rem 0 0.75rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.blocked-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.blocked-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  background: var(--bg-card);
+  border: 1px solid #2a2a3a;
+  border-radius: var(--radius);
+}
+
+.blocked-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.blocked-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.blocked-artist {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.blocked-unblock {
+  flex-shrink: 0;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.78rem;
 }
 
 /* Full player — keep clear of status bar + 3-button / gesture nav */

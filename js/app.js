@@ -13,17 +13,29 @@ import { Player, bindPlayerUI } from "./player.js";
 import { setupMediaSession } from "./media-session.js";
 import { loadSettings, saveSettings } from "./settings.js";
 import {
-  isSongFavorite,
+  isSongLiked,
+  isSongBlocked,
   isAlbumFavorite,
-  toggleSongFavorite,
+  setSongThumbsUp,
+  setSongThumbsDown,
+  getSongRating,
   toggleAlbumFavorite,
-  getFavoriteSongs,
+  getLikedSongs,
+  getBlockedSongs,
   getFavoriteAlbums,
-  favoriteHeartSvg,
+  thumbsUpSvg,
+  thumbsDownSvg,
+  songRateButtonsHtml,
   onFavoritesChange,
   addSongFavorites,
   replaceSongFavorites,
   favoriteSongCount,
+  blockedSongCount,
+  filterPlayableSongs,
+  unblockSong,
+  clearAllBlocked,
+  clearAllLiked,
+  clearAllRatings,
 } from "./favorites.js";
 import {
   loadLibraryCache,
@@ -72,82 +84,6 @@ const GENRE_PRESETS = [
 ];
 
 const DECADES = [1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020];
-
-/**
- * Artists never added by "Favorite my mix" / bulk favorite.
- * Matching is normalized (lowercase, strip punctuation) and substring-based.
- */
-const BLOCKED_ARTISTS = [
-  "barbra streisand", "barbra streisand", "babra streisand",
-  "barry manilow", "berry manilow",
-  "barry white", "berry white",
-  "billie eilish", "billy eilish",
-  "christina aguilera",
-  "chuck berry",
-  "david allan coe", "david allen coe",
-  "diana ross", "dina ross",
-  "dolly parton",
-  "doris day",
-  "elvis presley",
-  "fiona apple",
-  "frank sinatra",
-  "george jones", "geoge jones", "geoge joness",
-  "gladys knight",
-  "grateful dead", "gratful dead",
-  "insane clown posse", "insane clow posse",
-  "janet jackson",
-  "janis joplin",
-  "john denver",
-  "johnny cash", "jonny cash",
-  "johnny paycheck", "jonny paycheck",
-  "louis armstrong",
-  "madonna",
-  "mariah carey",
-  "marvin gaye", "marvine gaye",
-  "merle haggard",
-  "miley cyrus",
-  "patsy cline",
-  "phil collins",
-  "ray charles",
-  "roy clark",
-  "simon and garfunkel", "simon & garfunkel",
-  "snoop dogg", "snoop dog",
-  "spice girls",
-  "the temptations", "temptations",
-  "waylon jennings",
-];
-
-function normalizeArtistName(name) {
-  return String(name || "")
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/&/g, " and ")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-const BLOCKED_ARTIST_KEYS = BLOCKED_ARTISTS.map(normalizeArtistName);
-
-function isBlockedArtist(song) {
-  const a = normalizeArtistName(song?.artist);
-  if (!a) return false;
-  // Exact or contains blocked name (and reverse for short keys like "elvis")
-  return BLOCKED_ARTIST_KEYS.some((blocked) => {
-    if (!blocked) return false;
-    if (a === blocked) return true;
-    if (blocked.length >= 5 && (a.includes(blocked) || blocked.includes(a))) return true;
-    // multi-word: all tokens present
-    const tokens = blocked.split(" ").filter((t) => t.length > 2);
-    if (tokens.length >= 2 && tokens.every((t) => a.includes(t))) return true;
-    return false;
-  });
-}
-
-function filterBlockedArtists(songs) {
-  return (songs || []).filter((s) => !isBlockedArtist(s));
-}
 
 function pushContentFrame(frame) {
   contentStack.push(frame);
@@ -244,8 +180,7 @@ const els = {
   btnRepeat: document.getElementById("btn-repeat"),
   btnClosePlayer: document.getElementById("btn-close-player"),
   npExpand: document.getElementById("np-expand"),
-  npFav: document.getElementById("np-fav"),
-  btnFav: document.getElementById("btn-fav"),
+
 };
 
 const player = new Player(els.audio);
@@ -261,7 +196,8 @@ const playerUI = bindPlayerUI(player, () => api, { ...els, content: els.content 
 
 function songsWithUrls(songs) {
   const transcode = !isNativeApp();
-  return songs.map((s) => ({
+  // Never queue thumbs-down (blocked) songs on this device
+  return filterPlayableSongs(songs).map((s) => ({
     ...s,
     streamUrl: api.streamUrl(s.id, { transcode }),
     coverArtUrl: s.coverArt ? api.coverArtUrl(s.coverArt, 512) : "",
@@ -328,7 +264,7 @@ function renderAlbumCard(al) {
         <div class="album-name">${escapeHtml(al.name)}</div>
         <div class="album-artist">${escapeHtml(al.artist || "")}</div>
       </button>
-      <button class="fav-btn album-fav${isAlbumFavorite(al.id) ? " active" : ""}" data-fav-album="${al.id}" aria-label="Favorite album">${favoriteHeartSvg(isAlbumFavorite(al.id))}</button>
+      <button class="rate-btn up album-fav${isAlbumFavorite(al.id) ? " active" : ""}" data-fav-album="${al.id}" aria-label="Like album">${thumbsUpSvg(isAlbumFavorite(al.id))}</button>
     </div>
   `;
 }
@@ -354,7 +290,7 @@ function renderSongItem(s, i, showAlbum = false) {
         <div class="song-title">${escapeHtml(s.title)}</div>
         <div class="song-sub">${escapeHtml(showAlbum ? s.album : s.artist)}</div>
       </div>
-      <button class="fav-btn song-fav${isSongFavorite(s.id) ? " active" : ""}" data-fav-song="${s.id}" aria-label="Favorite song">${favoriteHeartSvg(isSongFavorite(s.id))}</button>
+      ${songRateButtonsHtml(s.id)}
       <span class="song-dur">${formatDuration(s.duration)}</span>
     </li>
   `;
@@ -408,15 +344,20 @@ function setupContentDelegation(container) {
   if (container._delegated) return;
   container._delegated = true;
   container.addEventListener("click", (e) => {
-    const favSong = e.target.closest("[data-fav-song]");
-    if (favSong) {
+    const upBtn = e.target.closest("[data-rate-up]");
+    if (upBtn) {
       e.stopPropagation();
-      const song = container._listSongs?.find((s) => s.id === favSong.dataset.favSong);
+      const song = container._listSongs?.find((s) => s.id === upBtn.dataset.rateUp);
       if (!song) return;
-      const added = toggleSongFavorite(song);
-      favSong.classList.toggle("active", added);
-      favSong.innerHTML = favoriteHeartSvg(added);
-      showToast(added ? "Added to favorites" : "Removed from favorites");
+      handleSongThumbsUp(song, container);
+      return;
+    }
+    const downBtn = e.target.closest("[data-rate-down]");
+    if (downBtn) {
+      e.stopPropagation();
+      const song = container._listSongs?.find((s) => s.id === downBtn.dataset.rateDown);
+      if (!song) return;
+      handleSongThumbsDown(song, container);
       return;
     }
     const favAlbum = e.target.closest("[data-fav-album]");
@@ -426,8 +367,8 @@ function setupContentDelegation(container) {
       if (!album) return;
       const added = toggleAlbumFavorite(album);
       favAlbum.classList.toggle("active", added);
-      favAlbum.innerHTML = favoriteHeartSvg(added);
-      showToast(added ? "Album favorited" : "Album unfavorited");
+      favAlbum.innerHTML = thumbsUpSvg(added);
+      showToast(added ? "Liked album" : "Removed album like");
       return;
     }
     const albumBtn = e.target.closest("[data-album]");
@@ -462,6 +403,82 @@ function attachAlbumClicks(container, fromScreen) {
   });
 }
 
+function refreshSongRateButtons(container, songId) {
+  const wrap = container?.querySelector(`[data-rate-up="${songId}"]`)?.closest(".rate-btns");
+  if (!wrap) return;
+  const rating = getSongRating(songId);
+  const up = wrap.querySelector("[data-rate-up]");
+  const down = wrap.querySelector("[data-rate-down]");
+  if (up) {
+    up.classList.toggle("active", rating === "up");
+    up.innerHTML = thumbsUpSvg(rating === "up");
+  }
+  if (down) {
+    down.classList.toggle("active", rating === "down");
+    down.innerHTML = thumbsDownSvg(rating === "down");
+  }
+}
+
+function handleSongThumbsUp(song, container) {
+  const result = setSongThumbsUp(song);
+  if (container) refreshSongRateButtons(container, song.id);
+  // Refresh all visible lists + player chrome
+  document.querySelectorAll(".rate-btns").forEach((wrap) => {
+    const id = wrap.querySelector("[data-rate-up]")?.dataset?.rateUp;
+    if (id === song.id) {
+      const rating = getSongRating(song.id);
+      const up = wrap.querySelector("[data-rate-up]");
+      const down = wrap.querySelector("[data-rate-down]");
+      if (up) {
+        up.classList.toggle("active", rating === "up");
+        up.innerHTML = thumbsUpSvg(rating === "up");
+      }
+      if (down) {
+        down.classList.toggle("active", rating === "down");
+        down.innerHTML = thumbsDownSvg(rating === "down");
+      }
+    }
+  });
+  updatePlayingRating(player.current);
+  showToast(result === "up" ? "Liked" : "Like removed");
+}
+
+function handleSongThumbsDown(song, container) {
+  const result = setSongThumbsDown(song);
+  document.querySelectorAll(".rate-btns").forEach((wrap) => {
+    const id = wrap.querySelector("[data-rate-up]")?.dataset?.rateUp;
+    if (id === song.id) {
+      const rating = getSongRating(song.id);
+      const up = wrap.querySelector("[data-rate-up]");
+      const down = wrap.querySelector("[data-rate-down]");
+      if (up) {
+        up.classList.toggle("active", rating === "up");
+        up.innerHTML = thumbsUpSvg(rating === "up");
+      }
+      if (down) {
+        down.classList.toggle("active", rating === "down");
+        down.innerHTML = thumbsDownSvg(rating === "down");
+      }
+    }
+  });
+  updatePlayingRating(player.current);
+  if (result === "down") {
+    showToast("Won't play again on this device");
+    // Skip if this is the current track
+    if (player.current?.id === song.id) {
+      try {
+        player.next();
+      } catch {
+        /* ignore */
+      }
+    }
+  } else {
+    showToast("Unblocked — can play again");
+  }
+  // Settings blocked list may be open
+  renderBlockedSettingsList();
+}
+
 function attachFavoriteHandlers(container, songs = [], albums = []) {
   if (songs.length > 30 || albums.length > 30) {
     bindListData(container, songs, albums);
@@ -470,15 +487,20 @@ function attachFavoriteHandlers(container, songs = [], albums = []) {
   const songMap = new Map(songs.map((s) => [s.id, s]));
   const albumMap = new Map(albums.map((a) => [a.id, a]));
 
-  container.querySelectorAll("[data-fav-song]").forEach((btn) => {
+  container.querySelectorAll("[data-rate-up]").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const song = songMap.get(btn.dataset.favSong);
+      const song = songMap.get(btn.dataset.rateUp);
       if (!song) return;
-      const added = toggleSongFavorite(song);
-      btn.classList.toggle("active", added);
-      btn.innerHTML = favoriteHeartSvg(added);
-      showToast(added ? "Added to favorites" : "Removed from favorites");
+      handleSongThumbsUp(song, container);
+    });
+  });
+  container.querySelectorAll("[data-rate-down]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const song = songMap.get(btn.dataset.rateDown);
+      if (!song) return;
+      handleSongThumbsDown(song, container);
     });
   });
 
@@ -489,8 +511,8 @@ function attachFavoriteHandlers(container, songs = [], albums = []) {
       if (!album) return;
       const added = toggleAlbumFavorite(album);
       btn.classList.toggle("active", added);
-      btn.innerHTML = favoriteHeartSvg(added);
-      showToast(added ? "Album favorited" : "Album unfavorited");
+      btn.innerHTML = thumbsUpSvg(added);
+      showToast(added ? "Liked album" : "Removed album like");
     });
   });
 }
@@ -526,35 +548,59 @@ function highlightPlaying() {
   els.content.querySelector(`.song-item[data-song-id="${id}"]`)?.classList.add("playing");
 }
 
-function updatePlayingFavorite(song) {
-  const active = !!(song && isSongFavorite(song.id));
-  for (const btn of [els.npFav, els.btnFav]) {
-    if (!btn) continue;
-    btn.disabled = !song;
-    btn.classList.toggle("active", active);
-    btn.innerHTML = favoriteHeartSvg(active);
+function updatePlayingRating(song) {
+  const rating = song ? getSongRating(song.id) : "none";
+  const pairs = [
+    [document.getElementById("np-thumb-up"), document.getElementById("np-thumb-down")],
+    [document.getElementById("btn-thumb-up"), document.getElementById("btn-thumb-down")],
+  ];
+  for (const [up, down] of pairs) {
+    if (up) {
+      up.disabled = !song;
+      up.classList.toggle("active", rating === "up");
+      up.innerHTML = thumbsUpSvg(rating === "up");
+    }
+    if (down) {
+      down.disabled = !song;
+      down.classList.toggle("active", rating === "down");
+      down.innerHTML = thumbsDownSvg(rating === "down");
+    }
   }
 }
 
-function togglePlayingFavorite() {
+function onPlayingThumbsUp(e) {
+  e?.stopPropagation?.();
   const song = player.current;
   if (!song) return;
-  const added = toggleSongFavorite(song);
-  updatePlayingFavorite(song);
-  showToast(added ? "Added to favorites" : "Removed from favorites");
+  handleSongThumbsUp(song);
 }
 
-els.npFav?.addEventListener("click", (e) => {
-  e.stopPropagation();
-  togglePlayingFavorite();
-});
-els.btnFav?.addEventListener("click", togglePlayingFavorite);
+function onPlayingThumbsDown(e) {
+  e?.stopPropagation?.();
+  const song = player.current;
+  if (!song) return;
+  handleSongThumbsDown(song);
+}
+
+document.getElementById("np-thumb-up")?.addEventListener("click", onPlayingThumbsUp);
+document.getElementById("np-thumb-down")?.addEventListener("click", onPlayingThumbsDown);
+document.getElementById("btn-thumb-up")?.addEventListener("click", onPlayingThumbsUp);
+document.getElementById("btn-thumb-down")?.addEventListener("click", onPlayingThumbsDown);
 
 const _origTrackChange = player.onTrackChange;
 player.onTrackChange = (song) => {
+  // Skip blocked tracks if they somehow enter the queue
+  if (song?.id && isSongBlocked(song.id)) {
+    try {
+      player.next();
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
   _origTrackChange?.(song);
   highlightPlaying();
-  updatePlayingFavorite(song);
+  updatePlayingRating(song);
 };
 
 function captureSearchFrame() {
@@ -669,7 +715,7 @@ async function openAlbum(id, { fromScreen, skipPush = false } = {}) {
           <h3>${escapeHtml(album.name)}</h3>
           <p>${escapeHtml(album.artist)}${album.year ? ` · ${album.year}` : ""}</p>
         </div>
-        <button class="fav-btn detail-fav${isAlbumFavorite(album.id) ? " active" : ""}" data-fav-album="${album.id}" aria-label="Favorite album">${favoriteHeartSvg(isAlbumFavorite(album.id))}</button>
+        <button class="rate-btn up detail-fav${isAlbumFavorite(album.id) ? " active" : ""}" data-fav-album="${album.id}" aria-label="Like album">${thumbsUpSvg(isAlbumFavorite(album.id))}</button>
       </div>
       <div class="album-actions">
         <button class="quick-btn primary" id="btn-play-all">
@@ -973,12 +1019,12 @@ function collectMyMixSongs(allSongs) {
   for (const decade of [1980, 1990]) {
     for (const s of songsForDecade(allSongs, decade)) byId.set(s.id, s);
   }
-  return filterBlockedArtists([...byId.values()]);
+  return filterPlayableSongs([...byId.values()]);
 }
 
 /**
- * Rebuild Favorites = Rock + Alt + Country + 80s + 90s, minus blocked artists.
- * Replaces previous song favorites (redo).
+ * Rebuild Liked = Rock + Alt + Country + 80s + 90s (excludes thumbs-down).
+ * Replaces previous thumbs-up list.
  */
 function rebuildMyMixFavorites() {
   const all = getCachedSongs();
@@ -987,19 +1033,18 @@ function rebuildMyMixFavorites() {
     return { ok: false, total: 0, matched: 0 };
   }
   let mix = collectMyMixSongs(all);
-  // Cap / diversify for storage — no single artist dominates
   const pool = mix.length > 4000 ? sampleDiverseSongs(mix, 4000) : mix;
   const total = replaceSongFavorites(pool);
   if (total < 0) {
-    showToast("Storage full — could not save favorites");
+    showToast("Storage full — could not save likes");
     return { ok: false, total: 0, matched: mix.length };
   }
-  showToast(`Favorites rebuilt: ${total} songs (no blocked artists) · Shuffle from Favorites`);
-  return { ok: true, total, matched: mix.length, blockedRemoved: true };
+  showToast(`Liked list: ${total} songs · open Liked to shuffle`);
+  return { ok: true, total, matched: mix.length };
 }
 
 function favoriteSongsBulk(songs, label, { replace = false } = {}) {
-  const filtered = filterBlockedArtists(songs);
+  const filtered = filterPlayableSongs(songs);
   if (!filtered.length) {
     showToast(`No songs found for ${label} — Sync Library first`);
     return 0;
@@ -1008,22 +1053,22 @@ function favoriteSongsBulk(songs, label, { replace = false } = {}) {
   if (replace) {
     const total = replaceSongFavorites(pool);
     if (total < 0) {
-      showToast("Storage full — remove some favorites and try again");
+      showToast("Storage full — remove some likes and try again");
       return -1;
     }
-    showToast(`Favorites set to ${total} songs · ${label}`);
+    showToast(`Liked set to ${total} songs · ${label}`);
     return total;
   }
   const added = addSongFavorites(pool);
   if (added < 0) {
-    showToast("Storage full — remove some favorites and try again");
+    showToast("Storage full — remove some likes and try again");
     return -1;
   }
   const total = favoriteSongCount();
   showToast(
     added
-      ? `Added ${added} to Favorites (${total} total) · ${label}`
-      : `Already in Favorites (${total}) · ${label}`
+      ? `Liked ${added} more (${total} total) · ${label}`
+      : `Already liked (${total}) · ${label}`
   );
   return added;
 }
@@ -1053,8 +1098,8 @@ function openGenreSongs(title, songs) {
         Shuffle All
       </button>
       <button class="quick-btn secondary" id="btn-fav-genre">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
-        Favorite All
+        ${thumbsUpSvg(true)}
+        Like All
       </button>
     </div>
     <ul class="song-list" id="active-song-list"></ul>
@@ -1114,11 +1159,11 @@ function renderGenres() {
     <p class="library-hint">From your synced library · tags come from the server (genre / year).</p>
     <div class="album-actions" style="margin-bottom:1rem">
       <button class="quick-btn primary" id="btn-fav-my-mix">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
-        Favorite my mix
+        ${thumbsUpSvg(true)}
+        Like my mix
       </button>
     </div>
-    <p class="library-hint">My mix = Rock + Alt Rock + Country + 1980s + 1990s (${mix.length} songs after artist blocklist). Rebuilds Favorites (replaces previous list). Then <strong>Favorites → Shuffle</strong>.</p>
+    <p class="library-hint">My mix = Rock + Alt Rock + Country + 1980s + 1990s (${mix.length} songs, skips thumbs-down). Rebuilds your Liked list. Then open <strong>Liked → Shuffle</strong>.</p>
     <div class="section-title">Genres</div>
     <div class="genre-grid">${genreCards}</div>
     <div class="section-title">Decades</div>
@@ -1203,7 +1248,7 @@ function switchTab(tab, { fromBack = false } = {}) {
 
 function renderFavorites() {
   const panel = document.getElementById("favorites-content");
-  const songs = getFavoriteSongs();
+  const songs = getLikedSongs();
   const albums = getFavoriteAlbums();
   const playlists = getPlaylists();
 
@@ -1221,7 +1266,7 @@ function renderFavorites() {
   `;
 
   if (!songs.length && !albums.length) {
-    html += '<div class="empty-state" style="padding-top:1rem">No favorite songs/albums yet — tap the heart on any song or album</div>';
+    html += '<div class="empty-state" style="padding-top:1rem">No liked songs yet — tap 👍 on any track. 👎 never plays on this device.</div>';
     panel.innerHTML = html;
     panel.querySelector("#btn-open-playlists-from-fav")?.addEventListener("click", openPlaylists);
     return;
@@ -1230,7 +1275,7 @@ function renderFavorites() {
   if (songs.length) {
     html += `
       <div class="favorites-section">
-        <div class="section-title">Songs</div>
+        <div class="section-title">Liked songs (${songs.length})</div>
         <div class="album-actions">
           <button class="quick-btn primary" id="btn-play-fav-songs">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -1246,7 +1291,7 @@ function renderFavorites() {
     `;
   }
   if (albums.length) {
-    html += `<div class="favorites-section"><div class="section-title">Albums</div>${renderAlbumGrid(albums)}</div>`;
+    html += `<div class="favorites-section"><div class="section-title">Liked albums</div>${renderAlbumGrid(albums)}</div>`;
   }
   panel.innerHTML = html;
 
@@ -1261,7 +1306,6 @@ function renderFavorites() {
     player.playAll(songsWithUrls(songs));
   });
   panel.querySelector("#btn-shuffle-fav-songs")?.addEventListener("click", () => {
-    // Always diversify — large favorites lists still collapse to a few big artists without this
     const pool = sampleDiverseSongs(songs, Math.min(songs.length, 900));
     player.playShuffled(songsWithUrls(pool));
   });
@@ -1680,9 +1724,79 @@ function openSettings() {
   document.getElementById("edit-connection-panel").hidden = true;
   document.getElementById("edit-connection-error").hidden = true;
   updateLibrarySettingsUI();
+  renderBlockedSettingsList();
 
   showScreen("screen-settings");
 }
+
+function renderBlockedSettingsList() {
+  const list = document.getElementById("blocked-songs-list");
+  const countEl = document.getElementById("blocked-songs-count");
+  if (!list) return;
+  const blocked = getBlockedSongs().sort((a, b) =>
+    String(a.title || "").localeCompare(String(b.title || ""))
+  );
+  if (countEl) countEl.textContent = String(blocked.length);
+  if (!blocked.length) {
+    list.innerHTML = `<p class="settings-hint settings-hint-muted">No blocked songs. Tap 👎 on a track to never play it on this device.</p>`;
+    return;
+  }
+  list.innerHTML = `<ul class="blocked-list">${blocked
+    .map(
+      (s) => `
+    <li class="blocked-item">
+      <div class="blocked-info">
+        <span class="blocked-title">${escapeHtml(s.title || "Unknown")}</span>
+        <span class="blocked-artist">${escapeHtml(s.artist || "")}</span>
+      </div>
+      <button type="button" class="btn secondary blocked-unblock" data-unblock="${s.id}">Unblock</button>
+    </li>`
+    )
+    .join("")}</ul>`;
+  list.querySelectorAll("[data-unblock]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      unblockSong(btn.dataset.unblock);
+      showToast("Unblocked");
+      renderBlockedSettingsList();
+      updatePlayingRating(player.current);
+    });
+  });
+}
+
+document.getElementById("btn-clear-blocked")?.addEventListener("click", () => {
+  if (!blockedSongCount()) {
+    showToast("Nothing blocked");
+    return;
+  }
+  if (!confirm("Unblock all thumbs-down songs on this device?")) return;
+  clearAllBlocked();
+  renderBlockedSettingsList();
+  showToast("All blocked songs cleared");
+});
+
+document.getElementById("btn-clear-liked")?.addEventListener("click", () => {
+  if (!favoriteSongCount()) {
+    showToast("No likes to clear");
+    return;
+  }
+  if (!confirm("Clear all thumbs-up (liked) songs on this device?")) return;
+  clearAllLiked();
+  showToast("All likes cleared");
+  if (document.getElementById("screen-favorites")?.classList.contains("active")) {
+    renderFavorites();
+  }
+});
+
+document.getElementById("btn-reset-ratings")?.addEventListener("click", () => {
+  if (!confirm("Reset all likes and blocked songs on this device? Fresh start.")) return;
+  clearAllRatings();
+  renderBlockedSettingsList();
+  updatePlayingRating(player.current);
+  showToast("Ratings reset");
+  if (document.getElementById("screen-favorites")?.classList.contains("active")) {
+    renderFavorites();
+  }
+});
 
 document.querySelectorAll(".nav-item").forEach((btn) => {
   btn.addEventListener("click", () => switchTab(btn.dataset.tab));
@@ -1708,7 +1822,7 @@ function openExternalLink(url) {
 }
 
 function feedbackMailto() {
-  const ver = "2.37";
+  const ver = "2.38";
   const body = [
     "Device / Android version:",
     "TuneFriend version: " + ver,
