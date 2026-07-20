@@ -14,7 +14,6 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.app.Service;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
@@ -24,26 +23,44 @@ import android.media.AudioFocusRequest;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
+import android.support.v4.media.MediaBrowserCompat;
+import android.support.v4.media.MediaDescriptionCompat;
+import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
-import android.support.v4.media.MediaMetadataCompat;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
+import androidx.media.MediaBrowserServiceCompat;
 import androidx.media.app.NotificationCompat.MediaStyle;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Random;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-public class MusicPlaybackService extends Service {
+/**
+ * Background music + Android Auto / MediaBrowser support.
+ * Auto connects via MediaBrowserService and browses Queue / Liked.
+ */
+public class MusicPlaybackService extends MediaBrowserServiceCompat {
     public static final String CHANNEL_ID = "tunefriend_music";
     public static final int NOTIFICATION_ID = 1001;
+
+    // Android Auto / MediaBrowser browse tree
+    public static final String MEDIA_ROOT = "root";
+    public static final String MEDIA_QUEUE = "queue";
+    public static final String MEDIA_LIKED = "liked";
+    public static final String MEDIA_ID_QUEUE_PREFIX = "queue:";
+    public static final String MEDIA_ID_LIKED_PREFIX = "liked:";
 
     public static final String ACTION_PLAY = "PLAY";
     public static final String ACTION_PAUSE = "PAUSE";
@@ -246,8 +263,14 @@ public class MusicPlaybackService extends Service {
             public void onSeekTo(long pos) {
                 seekToMs((int) pos);
             }
+
+            @Override
+            public void onPlayFromMediaId(String mediaId, Bundle extras) {
+                playFromMediaId(mediaId);
+            }
         });
         mediaSession.setActive(true);
+        setSessionToken(mediaSession.getSessionToken());
     }
 
     @Override
@@ -355,6 +378,7 @@ public class MusicPlaybackService extends Service {
             syncQueueIndexToCurrentTrack(trackId);
             refreshLegacyNextFromQueue();
             pendingQueueJson = null;
+            notifyBrowseTreeChanged();
         } catch (Exception ignored) {}
     }
 
@@ -910,7 +934,8 @@ public class MusicPlaybackService extends Service {
             PlaybackStateCompat.ACTION_PLAY_PAUSE |
             PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
             PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS |
-            PlaybackStateCompat.ACTION_SEEK_TO;
+            PlaybackStateCompat.ACTION_SEEK_TO |
+            PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID;
 
         int state = playing
             ? PlaybackStateCompat.STATE_PLAYING
@@ -1027,6 +1052,149 @@ public class MusicPlaybackService extends Service {
 
     @Override
     public IBinder onBind(Intent intent) {
-        return null;
+        // MediaBrowserServiceCompat handles browser binds; fall through for others.
+        IBinder binder = super.onBind(intent);
+        return binder;
+    }
+
+    // ── Android Auto / MediaBrowser ──────────────────────────────────────────
+
+    @Override
+    public BrowserRoot onGetRoot(@NonNull String clientPackageName, int clientUid,
+                                 @Nullable Bundle rootHints) {
+        // Allow Android Auto, AAOS, and system UI to browse.
+        return new BrowserRoot(MEDIA_ROOT, null);
+    }
+
+    @Override
+    public void onLoadChildren(@NonNull String parentId,
+                               @NonNull Result<List<MediaBrowserCompat.MediaItem>> result) {
+        List<MediaBrowserCompat.MediaItem> items = new ArrayList<>();
+        if (MEDIA_ROOT.equals(parentId)) {
+            items.add(browsableItem(MEDIA_QUEUE, "Play queue",
+                playQueue.isEmpty() ? "Start music in TuneFriend first" : playQueue.size() + " tracks"));
+            int likedCount = AutoLibraryStore.likedCount(this);
+            items.add(browsableItem(MEDIA_LIKED, "Liked",
+                likedCount == 0 ? "Thumbs-up songs from the phone app" : likedCount + " tracks"));
+        } else if (MEDIA_QUEUE.equals(parentId)) {
+            if (playQueue.isEmpty()) {
+                items.add(browsableItem("empty_queue", "Queue empty",
+                    "Open TuneFriend on your phone and play or shuffle music"));
+            } else {
+                for (int i = 0; i < playQueue.size(); i++) {
+                    TrackInfo t = playQueue.get(i);
+                    String title = t.title != null && !t.title.isEmpty() ? t.title : "Track " + (i + 1);
+                    String subtitle = t.artist != null ? t.artist : "";
+                    if (i == queueIndex) subtitle = "▶ " + subtitle;
+                    items.add(playableItem(MEDIA_ID_QUEUE_PREFIX + i, title, subtitle, t.artworkUrl));
+                }
+            }
+        } else if (MEDIA_LIKED.equals(parentId)) {
+            List<AutoLibraryStore.LikedTrack> liked = AutoLibraryStore.loadLiked(this);
+            if (liked.isEmpty()) {
+                items.add(browsableItem("empty_liked", "No liked songs",
+                    "Tap 👍 in TuneFriend to add songs here"));
+            } else {
+                for (int i = 0; i < liked.size(); i++) {
+                    AutoLibraryStore.LikedTrack t = liked.get(i);
+                    items.add(playableItem(MEDIA_ID_LIKED_PREFIX + i, t.title, t.artist, t.artworkUrl));
+                }
+            }
+        }
+        result.sendResult(items);
+    }
+
+    private MediaBrowserCompat.MediaItem browsableItem(String id, String title, String subtitle) {
+        MediaDescriptionCompat desc = new MediaDescriptionCompat.Builder()
+            .setMediaId(id)
+            .setTitle(title)
+            .setSubtitle(subtitle)
+            .build();
+        return new MediaBrowserCompat.MediaItem(desc, MediaBrowserCompat.MediaItem.FLAG_BROWSABLE);
+    }
+
+    private MediaBrowserCompat.MediaItem playableItem(String id, String title, String subtitle, String artUrl) {
+        MediaDescriptionCompat.Builder b = new MediaDescriptionCompat.Builder()
+            .setMediaId(id)
+            .setTitle(title)
+            .setSubtitle(subtitle);
+        if (artUrl != null && !artUrl.isEmpty()) {
+            try {
+                b.setIconUri(android.net.Uri.parse(artUrl));
+            } catch (Exception ignored) {}
+        }
+        return new MediaBrowserCompat.MediaItem(b.build(), MediaBrowserCompat.MediaItem.FLAG_PLAYABLE);
+    }
+
+    private void playFromMediaId(String mediaId) {
+        if (mediaId == null) return;
+        if (mediaId.startsWith(MEDIA_ID_QUEUE_PREFIX)) {
+            try {
+                int idx = Integer.parseInt(mediaId.substring(MEDIA_ID_QUEUE_PREFIX.length()));
+                if (idx >= 0 && idx < playQueue.size()) {
+                    TrackInfo t = playQueue.get(idx);
+                    queueIndex = idx;
+                    rememberPlayed(t);
+                    play(t.url, t.title, t.artist, t.artworkUrl, t.trackId, null, "", "", "", "");
+                    refreshLegacyNextFromQueue();
+                    if (callback != null) callback.onTrackAdvanced(t.trackId);
+                    return;
+                }
+            } catch (Exception ignored) {}
+        }
+        if (mediaId.startsWith(MEDIA_ID_LIKED_PREFIX)) {
+            try {
+                int idx = Integer.parseInt(mediaId.substring(MEDIA_ID_LIKED_PREFIX.length()));
+                List<AutoLibraryStore.LikedTrack> liked = AutoLibraryStore.loadLiked(this);
+                if (idx >= 0 && idx < liked.size()) {
+                    // Build a queue from all liked tracks with stream URLs and play from idx
+                    playQueue.clear();
+                    for (AutoLibraryStore.LikedTrack lt : liked) {
+                        if (lt.url == null || lt.url.isEmpty()) continue;
+                        TrackInfo t = new TrackInfo();
+                        t.url = lt.url;
+                        t.title = lt.title;
+                        t.artist = lt.artist;
+                        t.artworkUrl = lt.artworkUrl;
+                        t.trackId = lt.trackId;
+                        playQueue.add(t);
+                    }
+                    // Remap index if some lacked URLs
+                    int playIdx = 0;
+                    String wantId = liked.get(idx).trackId;
+                    for (int i = 0; i < playQueue.size(); i++) {
+                        if (wantId != null && wantId.equals(playQueue.get(i).trackId)) {
+                            playIdx = i;
+                            break;
+                        }
+                    }
+                    if (!playQueue.isEmpty()) {
+                        queueIndex = playIdx;
+                        queueShuffle = false;
+                        TrackInfo t = playQueue.get(playIdx);
+                        rememberPlayed(t);
+                        play(t.url, t.title, t.artist, t.artworkUrl, t.trackId, null, "", "", "", "");
+                        refreshLegacyNextFromQueue();
+                        notifyBrowseTreeChanged();
+                        if (callback != null) callback.onTrackAdvanced(t.trackId);
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void notifyBrowseTreeChanged() {
+        try {
+            notifyChildrenChanged(MEDIA_ROOT);
+            notifyChildrenChanged(MEDIA_QUEUE);
+            notifyChildrenChanged(MEDIA_LIKED);
+        } catch (Exception ignored) {}
+    }
+
+    /** Called when the phone app updates Liked tracks for Auto. */
+    public static void notifyLikedChanged() {
+        if (instance != null) {
+            instance.notifyBrowseTreeChanged();
+        }
     }
 }

@@ -11,6 +11,7 @@
 import { SubsonicAPI, saveConfig, loadConfig, clearConfig, formatDuration, isNativeApp } from "./api.js";
 import { Player, bindPlayerUI } from "./player.js";
 import { setupMediaSession } from "./media-session.js";
+import { nativeSyncLikedForAuto, canUseNativePlayer } from "./native-player-bridge.js";
 import { loadSettings, saveSettings } from "./settings.js";
 import {
   isSongLiked,
@@ -1845,7 +1846,7 @@ function openExternalLink(url) {
 }
 
 function feedbackMailto() {
-  const ver = "2.40";
+  const ver = "2.41";
   const body = [
     "Device / Android version:",
     "TuneFriend version: " + ver,
@@ -1948,6 +1949,7 @@ els.loginForm.addEventListener("submit", async (e) => {
     showBottomDock(true);
     await initLibraryCache();
     await restorePlayback();
+    syncLikedToAndroidAuto();
     switchTab("home");
   } catch (err) {
     els.loginError.textContent = friendlyLoginError(err, config);
@@ -1971,7 +1973,28 @@ onFavoritesChange(() => {
     const countEl = document.getElementById("blocked-songs-count");
     if (countEl) countEl.textContent = String(blockedSongCount());
   }
+  // Refresh Android Auto "Liked" browse tree
+  syncLikedToAndroidAuto();
 });
+
+/** Push thumbs-up songs (+ stream URLs) to native for Android Auto. */
+function syncLikedToAndroidAuto() {
+  if (!isNativeApp() || !canUseNativePlayer() || !api) return;
+  try {
+    const songs = getLikedSongs();
+    const tracks = songs.map((s) => ({
+      trackId: String(s.id),
+      title: s.title || "Unknown",
+      artist: s.artist || "",
+      artworkUrl: s.coverArt ? api.coverArtUrl(s.coverArt, 256) : "",
+      // Direct server URL so Auto/MediaPlayer can fetch without the WebView proxy
+      url: api.streamUrl(s.id, { transcode: false }),
+    }));
+    nativeSyncLikedForAuto(tracks);
+  } catch {
+    /* ignore */
+  }
+}
 
 onPlaylistsChange(() => {
   if (document.getElementById("screen-playlists")?.classList.contains("active")) {
@@ -2117,6 +2140,7 @@ async function init() {
       showBottomDock(true);
       await initLibraryCache();
       await restorePlayback();
+      syncLikedToAndroidAuto();
       switchTab("home");
       return;
     } catch {

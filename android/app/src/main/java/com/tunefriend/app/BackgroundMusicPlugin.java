@@ -126,6 +126,17 @@ public class BackgroundMusicPlugin extends Plugin {
         call.resolve();
     }
 
+    /**
+     * Sync Liked (thumbs-up) tracks to SharedPreferences for Android Auto browse.
+     * Each item: { trackId, title, artist, artworkUrl, url }
+     */
+    @PluginMethod
+    public void syncLikedForAuto(PluginCall call) {
+        String json = call.getString("likedJson", "[]");
+        AutoLibraryStore.saveLikedJson(getContext(), json);
+        call.resolve();
+    }
+
     private void putModeExtras(Intent intent, PluginCall call) {
         JSObject data = call.getData();
         if (data == null) return;

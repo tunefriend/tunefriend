@@ -89,6 +89,21 @@ export async function nativeSetQueue(queue, { index = 0, shuffle = false, repeat
   });
 }
 
+/**
+ * Push Liked (thumbs-up) tracks to native SharedPreferences for Android Auto.
+ * Each item needs a direct stream URL (not proxy) for the car head unit.
+ * @param {Array<{trackId:string,title:string,artist:string,artworkUrl:string,url:string}>} tracks
+ */
+export async function nativeSyncLikedForAuto(tracks) {
+  const p = getNativePlugin();
+  if (!p?.syncLikedForAuto) return;
+  try {
+    await p.syncLikedForAuto({ likedJson: JSON.stringify(tracks || []) });
+  } catch {
+    /* Auto sync is best-effort */
+  }
+}
+
 export async function nativePlay(song, nextSong = null, options = {}) {
   const p = getNativePlugin();
   if (!p) throw new Error("Native player unavailable — reinstall latest APK");
