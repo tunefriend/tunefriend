@@ -10,10 +10,20 @@
 
 import { md5, randomSalt } from "./md5.js";
 import { loadSettings } from "./settings.js";
+import { secureSet, secureGet, secureRemove, secureClear } from "./secure-store.js";
 
 const API_VERSION = "1.16.1";
 const CLIENT = "TuneFriend";
 const CLIENT_VERSION = "1.0";
+
+/** Legacy cleartext blob (migrated away on first secure load). */
+const LEGACY_CONFIG_KEY = "tunefriend_config";
+/** Non-secret connection fields only (never password). */
+const CONFIG_META_KEY = "tunefriend_config_meta";
+
+/** In-memory config after initConfigStore() — loadConfig() is sync for app code. */
+let configCache = null;
+let configReady = false;
 
 /** Subsonic JSON often returns a single object instead of a one-element array. */
 export function asArray(value) {
@@ -27,24 +37,155 @@ function normalizeServerUrl(url) {
   return u;
 }
 
-export function saveConfig(config) {
-  localStorage.setItem("tunefriend_config", JSON.stringify(config));
+export function isNativeApp() {
+  return window.Capacitor?.isNativePlatform?.() === true;
 }
 
-export function loadConfig() {
+/**
+ * Load credentials into memory. Call once at app start before loadConfig().
+ * Migrates legacy cleartext localStorage passwords into secure storage.
+ */
+export async function initConfigStore() {
   try {
-    return JSON.parse(localStorage.getItem("tunefriend_config"));
+    // 1) Legacy cleartext → migrate
+    const legacyRaw = localStorage.getItem(LEGACY_CONFIG_KEY);
+    if (legacyRaw) {
+      try {
+        const legacy = JSON.parse(legacyRaw);
+        if (legacy && typeof legacy === "object") {
+          await persistSecureConfig(legacy);
+          localStorage.removeItem(LEGACY_CONFIG_KEY);
+          configCache = {
+            serverUrl: legacy.serverUrl || "",
+            username: legacy.username || "",
+            password: legacy.password || "",
+            useProxy: legacy.useProxy,
+          };
+          configReady = true;
+          return configCache;
+        }
+      } catch {
+        localStorage.removeItem(LEGACY_CONFIG_KEY);
+      }
+    }
+
+    // 2) Meta + secure password
+    let meta = null;
+    try {
+      meta = JSON.parse(localStorage.getItem(CONFIG_META_KEY) || "null");
+    } catch {
+      meta = null;
+    }
+    if (!meta || !meta.serverUrl) {
+      configCache = null;
+      configReady = true;
+      return null;
+    }
+    const password = (await secureGet("password")) || "";
+    configCache = {
+      serverUrl: meta.serverUrl || "",
+      username: meta.username || "",
+      password,
+      useProxy: meta.useProxy,
+    };
+    configReady = true;
+    return configCache;
   } catch {
+    configCache = null;
+    configReady = true;
     return null;
   }
 }
 
-export function clearConfig() {
-  localStorage.removeItem("tunefriend_config");
+async function persistSecureConfig(config) {
+  const serverUrl = config?.serverUrl || "";
+  const username = config?.username || "";
+  const password = config?.password || "";
+  const useProxy = config?.useProxy;
+
+  // Never write password into localStorage
+  localStorage.setItem(
+    CONFIG_META_KEY,
+    JSON.stringify({
+      serverUrl,
+      username,
+      useProxy,
+      // flag only — not the secret
+      passwordStored: !!password,
+    })
+  );
+  localStorage.removeItem(LEGACY_CONFIG_KEY);
+
+  if (password) {
+    await secureSet("password", password);
+  } else {
+    await secureRemove("password");
+  }
+  // Optional redundant copies under secure store for native restore without meta
+  await secureSet("serverUrl", serverUrl);
+  await secureSet("username", username);
 }
 
-export function isNativeApp() {
-  return window.Capacitor?.isNativePlatform?.() === true;
+/**
+ * Persist connection settings. Password is encrypted (native Keystore / web AES-GCM).
+ * @returns {Promise<void>}
+ */
+export async function saveConfig(config) {
+  await persistSecureConfig(config || {});
+  configCache = {
+    serverUrl: config?.serverUrl || "",
+    username: config?.username || "",
+    password: config?.password || "",
+    useProxy: config?.useProxy,
+  };
+  configReady = true;
+}
+
+/**
+ * Sync read of in-memory config (after initConfigStore).
+ * Returns null if not logged in / not initialized.
+ */
+export function loadConfig() {
+  if (!configReady) {
+    // Fallback: never return cleartext legacy password path without migration attempt
+    try {
+      const meta = JSON.parse(localStorage.getItem(CONFIG_META_KEY) || "null");
+      if (meta?.serverUrl) {
+        return {
+          serverUrl: meta.serverUrl,
+          username: meta.username || "",
+          password: "", // not yet loaded from secure store
+          useProxy: meta.useProxy,
+        };
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+  return configCache ? { ...configCache } : null;
+}
+
+export async function clearConfig() {
+  try {
+    localStorage.removeItem(LEGACY_CONFIG_KEY);
+    localStorage.removeItem(CONFIG_META_KEY);
+  } catch {
+    /* ignore */
+  }
+  try {
+    await secureClear();
+  } catch {
+    try {
+      await secureRemove("password");
+      await secureRemove("serverUrl");
+      await secureRemove("username");
+    } catch {
+      /* ignore */
+    }
+  }
+  configCache = null;
+  configReady = true;
 }
 
 export class SubsonicAPI {

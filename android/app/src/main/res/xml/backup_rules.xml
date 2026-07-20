@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Exclude encrypted secret prefs from cloud/device backup extracts -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="tunefriend_secure_prefs.xml" />
+    <exclude domain="sharedpref" path="tunefriend_secure_prefs" />
+    <exclude domain="sharedpref" path="tunefriend_auto_library_secure.xml" />
+    <exclude domain="sharedpref" path="tunefriend_auto_library_secure" />
+    <exclude domain="sharedpref" path="tunefriend_auto_library.xml" />
+    <exclude domain="sharedpref" path="tunefriend_auto_library" />
+</full-backup-content>

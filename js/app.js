@@ -8,7 +8,7 @@
  * (at your option) any later version.
  */
 
-import { SubsonicAPI, saveConfig, loadConfig, clearConfig, formatDuration, isNativeApp } from "./api.js";
+import { SubsonicAPI, saveConfig, loadConfig, clearConfig, initConfigStore, formatDuration, isNativeApp } from "./api.js";
 import { Player, bindPlayerUI } from "./player.js";
 import { setupMediaSession } from "./media-session.js";
 import { nativeSyncLikedForAuto, canUseNativePlayer } from "./native-player-bridge.js";
@@ -1846,7 +1846,7 @@ function openExternalLink(url) {
 }
 
 function feedbackMailto() {
-  const ver = "2.41";
+  const ver = "2.42";
   const body = [
     "Device / Android version:",
     "TuneFriend version: " + ver,
@@ -1942,7 +1942,7 @@ els.loginForm.addEventListener("submit", async (e) => {
     const testApi = new SubsonicAPI(config);
     await testApi.ping();
     api = testApi;
-    saveConfig(config);
+    await saveConfig(config);
     player.resolveSong = enrichSong;
     setupMediaSession(player, () => api);
     showScreen("screen-main");
@@ -2063,7 +2063,7 @@ document.getElementById("btn-save-connection").addEventListener("click", async (
     const testApi = new SubsonicAPI(config);
     await testApi.ping();
     api = testApi;
-    saveConfig(config);
+    await saveConfig(config);
     document.getElementById("settings-server").textContent = config.serverUrl;
     document.getElementById("settings-user").textContent = config.username;
     document.getElementById("edit-connection-panel").hidden = true;
@@ -2073,8 +2073,8 @@ document.getElementById("btn-save-connection").addEventListener("click", async (
     errEl.hidden = false;
   }
 });
-document.getElementById("btn-disconnect").addEventListener("click", () => {
-  clearConfig();
+document.getElementById("btn-disconnect").addEventListener("click", async () => {
+  await clearConfig();
   clearLibraryCache();
   clearPlaybackSession();
   api = null;
@@ -2125,8 +2125,10 @@ window.__tuneFriendRebuildFavorites = () => rebuildMyMixFavorites();
 async function init() {
   setupNativeUI();
   player.shuffle = loadSettings().shuffleDefault;
+  // Load + migrate credentials (password no longer plain localStorage)
+  await initConfigStore();
   const config = loadConfig();
-  if (config) {
+  if (config?.serverUrl && config?.password) {
     document.getElementById("server-url").value = config.serverUrl || "";
     document.getElementById("username").value = config.username || "";
     document.getElementById("password").value = config.password || "";
@@ -2144,7 +2146,7 @@ async function init() {
       switchTab("home");
       return;
     } catch {
-      clearConfig();
+      await clearConfig();
     }
   }
   showScreen("screen-login");
