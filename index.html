@@ -176,13 +176,13 @@
 
         <div class="settings-group">
           <h3>Thumbs up / down</h3>
-          <p class="settings-hint">👍 Like (Liked screen) · 👎 Never play on this device. Old hearts &amp; bulk blocklists were cleared for a fresh start.</p>
+          <p class="settings-hint">👍 adds to <strong>Liked</strong> (top bar) · 👎 never plays on this device.</p>
           <div class="settings-row">
             <span class="settings-label">Blocked songs</span>
             <span class="settings-value" id="blocked-songs-count">0</span>
           </div>
-          <div id="blocked-songs-list" class="blocked-songs-wrap"></div>
           <div class="settings-actions">
+            <button type="button" class="btn secondary settings-btn-block" id="btn-view-blocked">View blocked list…</button>
             <button type="button" class="btn secondary settings-btn-block" id="btn-clear-blocked">Clear all blocked</button>
             <button type="button" class="btn secondary settings-btn-block" id="btn-clear-liked">Clear all likes</button>
             <button type="button" class="btn danger settings-btn-block" id="btn-reset-ratings">Reset all ratings</button>
@@ -193,7 +193,7 @@
           <h3>About</h3>
           <div class="settings-row">
             <span class="settings-label">Version</span>
-            <span class="settings-value">2.39</span>
+            <span class="settings-value">2.40</span>
           </div>
           <div class="settings-actions">
             <button type="button" class="btn primary settings-btn-block" id="btn-feedback">Send feedback</button>
@@ -298,6 +298,26 @@
   </div>
 
   <div id="loading-overlay" class="loading-overlay"><div class="spinner"></div><span>Loading track…</span></div>
+
+  <!-- Blocked songs popup (thumbs down list) -->
+  <div id="blocked-modal" class="tf-modal" hidden>
+    <div class="tf-modal-backdrop" data-close-blocked-modal tabindex="-1"></div>
+    <div class="tf-modal-sheet" role="dialog" aria-labelledby="blocked-modal-title">
+      <header class="tf-modal-header">
+        <h3 id="blocked-modal-title">Blocked songs</h3>
+        <button type="button" class="icon-btn" id="btn-close-blocked-modal" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </header>
+      <p class="settings-hint tf-modal-hint">👎 songs never auto-play on this device. Unblock to allow them again.</p>
+      <div id="blocked-modal-list" class="blocked-songs-wrap tf-modal-body"></div>
+      <div class="tf-modal-footer">
+        <button type="button" class="btn secondary settings-btn-block" id="btn-modal-clear-blocked">Clear all</button>
+        <button type="button" class="btn primary settings-btn-block" id="btn-done-blocked-modal">Done</button>
+      </div>
+    </div>
+  </div>
+
   <audio id="audio" preload="metadata" playsinline></audio>
   <script src="/capacitor.js"></script>
   <script type="module" src="/js/app.js"></script>

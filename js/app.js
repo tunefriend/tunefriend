@@ -451,7 +451,7 @@ function handleSongThumbsUp(song, container) {
   const result = setSongThumbsUp(song);
   refreshAllRateButtonsForSong(song.id);
   updatePlayingRating(player.current);
-  showToast(result === "up" ? "Liked" : "Like removed");
+  showToast(result === "up" ? "Added to Liked" : "Removed from Liked");
 }
 
 function handleSongThumbsDown(song, container) {
@@ -463,7 +463,7 @@ function handleSongThumbsDown(song, container) {
   refreshAllRateButtonsForSong(song.id);
   updatePlayingRating(player.current);
   if (result === "down") {
-    showToast("Won't play again on this device");
+    showToast("Blocked — won't play on this device");
     if (songIdEq(player.current?.id, song.id)) {
       try {
         player.next();
@@ -474,7 +474,11 @@ function handleSongThumbsDown(song, container) {
   } else {
     showToast("Unblocked — can play again");
   }
-  renderBlockedSettingsList();
+  updateBlockedCountBadge();
+  // Refresh popup if open
+  if (!document.getElementById("blocked-modal")?.hidden) {
+    renderBlockedModalList();
+  }
 }
 
 function attachFavoriteHandlers(container, songs = [], albums = []) {
@@ -1230,30 +1234,13 @@ function renderFavorites() {
   const albums = getFavoriteAlbums();
   const playlists = getPlaylists();
 
-  let html = `
-    <div class="favorites-section">
-      <div class="section-title">Playlists</div>
-      <p class="library-hint" style="margin-bottom:0.75rem">Your custom lists (by artist or song). Manage them under <strong>Playlists</strong> in the top bar.</p>
-      <div class="album-actions">
-        <button class="quick-btn secondary" id="btn-open-playlists-from-fav">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
-          ${playlists.length ? `Open Playlists (${playlists.length})` : "Create a playlist"}
-        </button>
-      </div>
-    </div>
-  `;
-
-  if (!songs.length && !albums.length) {
-    html += '<div class="empty-state" style="padding-top:1rem">No liked songs yet — tap 👍 on any track. 👎 never plays on this device.</div>';
-    panel.innerHTML = html;
-    panel.querySelector("#btn-open-playlists-from-fav")?.addEventListener("click", openPlaylists);
-    return;
-  }
-
+  // Thumbs-up list first (same role as old Favorites)
+  let html = "";
   if (songs.length) {
     html += `
       <div class="favorites-section">
-        <div class="section-title">Liked songs (${songs.length})</div>
+        <div class="section-title">👍 Liked songs (${songs.length})</div>
+        <p class="library-hint" style="margin-bottom:0.75rem">Songs you thumbs-up. Play or shuffle them anytime.</p>
         <div class="album-actions">
           <button class="quick-btn primary" id="btn-play-fav-songs">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -1267,10 +1254,32 @@ function renderFavorites() {
         ${renderSongList(songs)}
       </div>
     `;
+  } else {
+    html += `
+      <div class="favorites-section">
+        <div class="section-title">👍 Liked songs</div>
+        <div class="empty-state" style="padding-top:0.5rem">No liked songs yet — tap 👍 on any track (same as the old heart favorites).</div>
+      </div>
+    `;
   }
+
   if (albums.length) {
     html += `<div class="favorites-section"><div class="section-title">Liked albums</div>${renderAlbumGrid(albums)}</div>`;
   }
+
+  html += `
+    <div class="favorites-section">
+      <div class="section-title">Playlists</div>
+      <p class="library-hint" style="margin-bottom:0.75rem">Your custom lists (by artist or song). Manage them under <strong>Playlists</strong> in the top bar.</p>
+      <div class="album-actions">
+        <button class="quick-btn secondary" id="btn-open-playlists-from-fav">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+          ${playlists.length ? `Open Playlists (${playlists.length})` : "Create a playlist"}
+        </button>
+      </div>
+    </div>
+  `;
+
   panel.innerHTML = html;
 
   bindListData(panel, songs, albums);
@@ -1702,21 +1711,25 @@ function openSettings() {
   document.getElementById("edit-connection-panel").hidden = true;
   document.getElementById("edit-connection-error").hidden = true;
   updateLibrarySettingsUI();
-  renderBlockedSettingsList();
+  updateBlockedCountBadge();
 
   showScreen("screen-settings");
 }
 
-function renderBlockedSettingsList() {
-  const list = document.getElementById("blocked-songs-list");
+function updateBlockedCountBadge() {
   const countEl = document.getElementById("blocked-songs-count");
+  if (countEl) countEl.textContent = String(blockedSongCount());
+}
+
+function renderBlockedModalList() {
+  const list = document.getElementById("blocked-modal-list");
   if (!list) return;
   const blocked = getBlockedSongs().sort((a, b) =>
     String(a.title || "").localeCompare(String(b.title || ""))
   );
-  if (countEl) countEl.textContent = String(blocked.length);
+  updateBlockedCountBadge();
   if (!blocked.length) {
-    list.innerHTML = `<p class="settings-hint settings-hint-muted">No blocked songs. Tap 👎 on a track to never play it on this device.</p>`;
+    list.innerHTML = `<p class="settings-hint settings-hint-muted" style="padding:0.5rem 0">No blocked songs yet. Tap 👎 on any track.</p>`;
     return;
   }
   list.innerHTML = `<ul class="blocked-list">${blocked
@@ -1727,7 +1740,7 @@ function renderBlockedSettingsList() {
         <span class="blocked-title">${escapeHtml(s.title || "Unknown")}</span>
         <span class="blocked-artist">${escapeHtml(s.artist || "")}</span>
       </div>
-      <button type="button" class="btn secondary blocked-unblock" data-unblock="${s.id}">Unblock</button>
+      <button type="button" class="btn secondary blocked-unblock" data-unblock="${String(s.id).replace(/"/g, "")}">Unblock</button>
     </li>`
     )
     .join("")}</ul>`;
@@ -1735,11 +1748,41 @@ function renderBlockedSettingsList() {
     btn.addEventListener("click", () => {
       unblockSong(btn.dataset.unblock);
       showToast("Unblocked");
-      renderBlockedSettingsList();
+      renderBlockedModalList();
       updatePlayingRating(player.current);
     });
   });
 }
+
+function openBlockedModal() {
+  const modal = document.getElementById("blocked-modal");
+  if (!modal) return;
+  renderBlockedModalList();
+  modal.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+function closeBlockedModal() {
+  const modal = document.getElementById("blocked-modal");
+  if (!modal) return;
+  modal.hidden = true;
+  document.body.classList.remove("modal-open");
+}
+
+document.getElementById("btn-view-blocked")?.addEventListener("click", openBlockedModal);
+document.getElementById("btn-close-blocked-modal")?.addEventListener("click", closeBlockedModal);
+document.getElementById("btn-done-blocked-modal")?.addEventListener("click", closeBlockedModal);
+document.querySelector("[data-close-blocked-modal]")?.addEventListener("click", closeBlockedModal);
+document.getElementById("btn-modal-clear-blocked")?.addEventListener("click", () => {
+  if (!blockedSongCount()) {
+    showToast("Nothing blocked");
+    return;
+  }
+  if (!confirm("Unblock all thumbs-down songs on this device?")) return;
+  clearAllBlocked();
+  renderBlockedModalList();
+  showToast("All blocked songs cleared");
+});
 
 document.getElementById("btn-clear-blocked")?.addEventListener("click", () => {
   if (!blockedSongCount()) {
@@ -1748,7 +1791,8 @@ document.getElementById("btn-clear-blocked")?.addEventListener("click", () => {
   }
   if (!confirm("Unblock all thumbs-down songs on this device?")) return;
   clearAllBlocked();
-  renderBlockedSettingsList();
+  updateBlockedCountBadge();
+  if (!document.getElementById("blocked-modal")?.hidden) renderBlockedModalList();
   showToast("All blocked songs cleared");
 });
 
@@ -1768,7 +1812,8 @@ document.getElementById("btn-clear-liked")?.addEventListener("click", () => {
 document.getElementById("btn-reset-ratings")?.addEventListener("click", () => {
   if (!confirm("Reset all likes and blocked songs on this device? Fresh start.")) return;
   clearAllRatings();
-  renderBlockedSettingsList();
+  updateBlockedCountBadge();
+  if (!document.getElementById("blocked-modal")?.hidden) renderBlockedModalList();
   updatePlayingRating(player.current);
   showToast("Ratings reset");
   if (document.getElementById("screen-favorites")?.classList.contains("active")) {
@@ -1800,7 +1845,7 @@ function openExternalLink(url) {
 }
 
 function feedbackMailto() {
-  const ver = "2.39";
+  const ver = "2.40";
   const body = [
     "Device / Android version:",
     "TuneFriend version: " + ver,
@@ -1917,9 +1962,14 @@ document.getElementById("btn-favorites").addEventListener("click", openFavorites
 document.getElementById("btn-playlists")?.addEventListener("click", openPlaylists);
 
 onFavoritesChange(() => {
-  updatePlayingFavorite(player.current);
+  updatePlayingRating(player.current);
   if (document.getElementById("screen-favorites")?.classList.contains("active")) {
     renderFavorites();
+  }
+  // Keep blocked count in settings fresh if that screen is open
+  if (document.getElementById("screen-settings")?.classList.contains("active")) {
+    const countEl = document.getElementById("blocked-songs-count");
+    if (countEl) countEl.textContent = String(blockedSongCount());
   }
 });
 
@@ -2041,7 +2091,7 @@ async function restorePlayback() {
   if (restored) {
     playerUI.updateUI();
     highlightPlaying();
-    updatePlayingFavorite(player.current);
+    updatePlayingRating(player.current);
   }
 }
 

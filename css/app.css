@@ -555,17 +555,29 @@ a.btn {
   transform: scale(0.9);
 }
 
+/* Liked (👍) — solid fill like old heart favorites */
 .rate-btn.up.active {
-  color: var(--accent);
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.35);
 }
 
+/* Blocked (👎) — solid pink fill */
 .rate-btn.down.active {
-  color: var(--accent-2);
+  color: #fff;
+  background: var(--accent-2);
+  box-shadow: 0 0 0 2px rgba(255, 107, 157, 0.35);
 }
 
 .rate-btn:disabled {
   opacity: 0.35;
   pointer-events: none;
+}
+
+.album-fav.rate-btn.up.active,
+.detail-fav.rate-btn.up.active {
+  color: #fff;
+  background: var(--accent);
 }
 
 /* legacy class kept for album overlays */
@@ -824,9 +836,9 @@ a.btn {
 }
 
 .blocked-songs-wrap {
-  margin: 0.5rem 0 0.75rem;
-  max-height: 220px;
+  margin: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .blocked-list {
@@ -843,9 +855,81 @@ a.btn {
   align-items: center;
   gap: 0.75rem;
   padding: 0.55rem 0.65rem;
-  background: var(--bg-card);
+  background: var(--bg);
   border: 1px solid #2a2a3a;
   border-radius: var(--radius);
+}
+
+/* Blocked list popup */
+body.modal-open {
+  overflow: hidden;
+}
+
+.tf-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.tf-modal[hidden] {
+  display: none !important;
+}
+
+.tf-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.tf-modal-sheet {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 520px;
+  max-height: min(78vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated, #14141c);
+  border: 1px solid #2a2a3a;
+  border-bottom: none;
+  border-radius: 16px 16px 0 0;
+  padding: 0.85rem 1rem calc(1rem + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.tf-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.tf-modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.tf-modal-hint {
+  margin: 0 0 0.75rem;
+}
+
+.tf-modal-body {
+  flex: 1;
+  min-height: 120px;
+  max-height: 48vh;
+  overflow-y: auto;
+  margin-bottom: 0.75rem;
+}
+
+.tf-modal-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .blocked-info {
