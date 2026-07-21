@@ -16,13 +16,21 @@ import { loadSettings, saveSettings } from "./settings.js";
 import {
   isSongLiked,
   isSongBlocked,
+  isSongPlayBlocked,
+  isArtistBlocked,
+  isArtistLiked,
+  getArtistRating,
   isAlbumFavorite,
   setSongThumbsUp,
   setSongThumbsDown,
+  setArtistThumbsUp,
+  setArtistThumbsDown,
   getSongRating,
   toggleAlbumFavorite,
   getLikedSongs,
   getBlockedSongs,
+  getBlockedArtists,
+  getLikedArtists,
   getFavoriteAlbums,
   thumbsUpSvg,
   thumbsDownSvg,
@@ -32,8 +40,11 @@ import {
   replaceSongFavorites,
   favoriteSongCount,
   blockedSongCount,
+  blockedArtistCount,
+  blockedTotalCount,
   filterPlayableSongs,
   unblockSong,
+  unblockArtist,
   clearAllBlocked,
   clearAllLiked,
   clearAllRatings,
@@ -572,8 +583,8 @@ for (const id of ["np-thumb-up", "np-thumb-down", "btn-thumb-up", "btn-thumb-dow
 
 const _origTrackChange = player.onTrackChange;
 player.onTrackChange = (song) => {
-  // Skip blocked tracks if they somehow enter the queue
-  if (song?.id && isSongBlocked(song.id)) {
+  // Skip blocked tracks / artists if they somehow enter the queue
+  if (song && isSongPlayBlocked(song)) {
     try {
       player.next();
     } catch {
@@ -720,6 +731,95 @@ async function openAlbum(id, { fromScreen, skipPush = false } = {}) {
   }
 }
 
+function artistRatingHint(rating, name) {
+  if (rating === "down") {
+    return `👎 Blocked — none of ${name}'s songs will play on this device.`;
+  }
+  if (rating === "up") {
+    return `👍 Liked artist — shows under Liked.`;
+  }
+  return "👍 Like this artist · 👎 never play them on this device (all albums & songs).";
+}
+
+function updateArtistRateButtons(container, artist) {
+  const rating = getArtistRating(artist.id, artist.name);
+  const up = container.querySelector("#btn-artist-thumbs-up, [data-artist-like]");
+  const down = container.querySelector("#btn-artist-thumbs-down, [data-artist-block]");
+  if (up) {
+    up.classList.toggle("active", rating === "up");
+    up.innerHTML = thumbsUpSvg(rating === "up");
+  }
+  if (down) {
+    down.classList.toggle("active", rating === "down");
+    down.innerHTML = thumbsDownSvg(rating === "down");
+  }
+  const hint = container.querySelector(".artist-rating-hint, .library-hint");
+  if (hint && hint.classList.contains("artist-rating-hint")) {
+    hint.textContent = artistRatingHint(rating, artist.name || "this artist");
+  }
+}
+
+function bindArtistRateButtons(container, artist) {
+  const apply = (result, kind) => {
+    updateArtistRateButtons(container, artist);
+    // Refresh search list buttons if present
+    document.querySelectorAll(".artist-item").forEach((row) => {
+      if (String(row.dataset.artist) !== String(artist.id)) return;
+      const r = getArtistRating(artist.id, artist.name);
+      const up = row.querySelector("[data-artist-like]");
+      const down = row.querySelector("[data-artist-block]");
+      if (up) {
+        up.classList.toggle("active", r === "up");
+        up.innerHTML = thumbsUpSvg(r === "up");
+      }
+      if (down) {
+        down.classList.toggle("active", r === "down");
+        down.innerHTML = thumbsDownSvg(r === "down");
+      }
+      const sub = row.querySelector(".artist-sub");
+      if (sub) {
+        let base = sub.textContent
+          .replace(/\s*· blocked$/, "")
+          .replace(/\s*· liked$/, "");
+        if (r === "down") base += " · blocked";
+        else if (r === "up") base += " · liked";
+        sub.textContent = base;
+      }
+    });
+    if (kind === "down" && result === "down") {
+      showToast(`Won't play ${artist.name} on this device`);
+      if (player.current && isSongPlayBlocked(player.current)) {
+        try {
+          player.next();
+        } catch {
+          /* ignore */
+        }
+      }
+    } else if (kind === "down") {
+      showToast(`Unblocked ${artist.name}`);
+    } else if (kind === "up" && result === "up") {
+      showToast(`Liked ${artist.name}`);
+    } else {
+      showToast(`Removed like for ${artist.name}`);
+    }
+    updateBlockedCountBadge();
+    if (document.getElementById("screen-favorites")?.classList.contains("active")) {
+      renderFavorites();
+    }
+  };
+
+  container.querySelector("#btn-artist-thumbs-up")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const result = setArtistThumbsUp({ id: artist.id, name: artist.name });
+    apply(result, "up");
+  });
+  container.querySelector("#btn-artist-thumbs-down")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const result = setArtistThumbsDown({ id: artist.id, name: artist.name });
+    apply(result, "down");
+  });
+}
+
 async function openArtist(id, name, { skipPush = false } = {}) {
   if (!skipPush) ensureSearchOnStack();
   backNav.setNavDepth("artist");
@@ -727,11 +827,25 @@ async function openArtist(id, name, { skipPush = false } = {}) {
   els.pageTitle.textContent = name || "Artist";
   try {
     const artist = await api.getArtist(id);
+    const rating = getArtistRating(artist.id, artist.name);
     els.content.innerHTML = `
-      <div class="section-title">${escapeHtml(artist.name)}</div>
+      <div class="artist-header">
+        <div class="section-title" style="margin:0">${escapeHtml(artist.name)}</div>
+        <div class="rate-btns artist-rate">
+          <button type="button" class="rate-btn up${rating === "up" ? " active" : ""}" id="btn-artist-thumbs-up" aria-label="Like this artist">
+            ${thumbsUpSvg(rating === "up")}
+          </button>
+          <button type="button" class="rate-btn down${rating === "down" ? " active" : ""}" id="btn-artist-thumbs-down" aria-label="Never play this artist">
+            ${thumbsDownSvg(rating === "down")}
+          </button>
+        </div>
+      </div>
+      <p class="library-hint artist-rating-hint">${escapeHtml(artistRatingHint(rating, artist.name))}</p>
+      <div class="section-title">Albums (${artist.albums?.length || 0})</div>
       ${renderAlbumGrid(artist.albums)}
     `;
     attachFavoriteHandlers(els.content, [], artist.albums);
+    bindArtistRateButtons(els.content, artist);
     els.content.querySelectorAll("[data-album]").forEach((el) => {
       el.addEventListener("click", () => {
         pushContentFrame(captureArtistFrame(id, artist.name));
@@ -918,28 +1032,196 @@ async function renderSongs() {
 
 function paintSearchResults(resultsEl, data) {
   let html = "";
-  if (data.artists.length) {
-    html += '<div class="section-title">Artists</div><ul class="artist-list">';
-    html += data.artists.map((a) => `
-      <li class="artist-item" data-artist="${a.id}">
+  if (data.artists?.length) {
+    html += `<div class="section-title">Artists (${data.artists.length})</div><ul class="artist-list">`;
+    html += data.artists
+      .map((a) => {
+        const rating = getArtistRating(a.id, a.name);
+        const albumHint =
+          a.albumCount != null
+            ? `${a.albumCount} album${a.albumCount === 1 ? "" : "s"}`
+            : "Tap for albums";
+        const status =
+          rating === "down" ? " · blocked" : rating === "up" ? " · liked" : "";
+        const safeId = String(a.id).replace(/"/g, "");
+        const safeName = escapeHtml(a.name);
+        return `
+      <li class="artist-item" data-artist="${safeId}">
         <div class="artist-avatar"><svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></div>
-        <span class="artist-name">${escapeHtml(a.name)}</span>
-      </li>
-    `).join("");
+        <div class="artist-meta">
+          <span class="artist-name">${safeName}</span>
+          <span class="artist-sub">${escapeHtml(albumHint)}${status}</span>
+        </div>
+        <div class="rate-btns">
+          <button type="button" class="rate-btn up${rating === "up" ? " active" : ""}" data-artist-like="${safeId}" data-artist-like-name="${safeName}" aria-label="Like this artist">${thumbsUpSvg(rating === "up")}</button>
+          <button type="button" class="rate-btn down${rating === "down" ? " active" : ""}" data-artist-block="${safeId}" data-artist-block-name="${safeName}" aria-label="Never play this artist">${thumbsDownSvg(rating === "down")}</button>
+        </div>
+      </li>`;
+      })
+      .join("");
     html += "</ul>";
   }
-  if (data.albums.length) {
-    html += '<div class="section-title">Albums</div>' + renderAlbumGrid(data.albums);
+  if (data.albums?.length) {
+    html += `<div class="section-title">Albums (${data.albums.length})</div>` + renderAlbumGrid(data.albums);
   }
-  if (data.songs.length) {
-    html += '<div class="section-title">Songs</div>' + renderSongList(data.songs, true);
+  if (data.songs?.length) {
+    html += `<div class="section-title">Songs (${data.songs.length})</div>` + renderSongList(data.songs, true);
   }
   if (!html) html = '<div class="empty-state">No results</div>';
   resultsEl.innerHTML = html;
   attachArtistClicks(resultsEl);
   attachAlbumClicks(resultsEl);
-  attachSongClicks(resultsEl, data.songs);
-  attachFavoriteHandlers(resultsEl, data.songs, data.albums);
+  attachSongClicks(resultsEl, data.songs || []);
+  attachFavoriteHandlers(resultsEl, data.songs || [], data.albums || []);
+  const refreshArtistRow = (row, artist) => {
+    if (!row) return;
+    const r = getArtistRating(artist.id, artist.name);
+    const up = row.querySelector("[data-artist-like]");
+    const down = row.querySelector("[data-artist-block]");
+    if (up) {
+      up.classList.toggle("active", r === "up");
+      up.innerHTML = thumbsUpSvg(r === "up");
+    }
+    if (down) {
+      down.classList.toggle("active", r === "down");
+      down.innerHTML = thumbsDownSvg(r === "down");
+    }
+    const sub = row.querySelector(".artist-sub");
+    if (sub) {
+      let base = sub.textContent
+        .replace(/\s*· blocked$/, "")
+        .replace(/\s*· liked$/, "");
+      if (r === "down") base += " · blocked";
+      else if (r === "up") base += " · liked";
+      sub.textContent = base;
+    }
+  };
+
+  resultsEl.querySelectorAll("[data-artist-like]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const artist = {
+        id: btn.dataset.artistLike,
+        name: btn.dataset.artistLikeName || "Artist",
+      };
+      const result = setArtistThumbsUp(artist);
+      refreshArtistRow(btn.closest(".artist-item"), artist);
+      showToast(result === "up" ? `Liked ${artist.name}` : `Removed like for ${artist.name}`);
+      updateBlockedCountBadge();
+      if (document.getElementById("screen-favorites")?.classList.contains("active")) {
+        renderFavorites();
+      }
+    });
+  });
+  resultsEl.querySelectorAll("[data-artist-block]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const artist = {
+        id: btn.dataset.artistBlock,
+        name: btn.dataset.artistBlockName || "Artist",
+      };
+      const result = setArtistThumbsDown(artist);
+      refreshArtistRow(btn.closest(".artist-item"), artist);
+      showToast(
+        result === "down"
+          ? `Won't play ${artist.name} on this device`
+          : `Unblocked ${artist.name}`
+      );
+      if (result === "down" && player.current && isSongPlayBlocked(player.current)) {
+        try {
+          player.next();
+        } catch {
+          /* ignore */
+        }
+      }
+      updateBlockedCountBadge();
+    });
+  });
+}
+
+/**
+ * Enrich server search with local library cache so artists always show
+ * when albums/songs match the query (some Subsonic servers return weak artist hits).
+ */
+function enrichSearchFromLibrary(query, data) {
+  const q = String(query || "").toLowerCase().trim();
+  if (q.length < 2) return data;
+  const cache = loadLibraryCache();
+  const artistsById = new Map(
+    (data.artists || []).map((a) => [String(a.id), { ...a }])
+  );
+  const artistsByName = new Map(
+    (data.artists || []).map((a) => [String(a.name || "").toLowerCase(), a])
+  );
+  const albums = [...(data.albums || [])];
+  const albumIds = new Set(albums.map((a) => String(a.id)));
+  const songs = [...(data.songs || [])];
+  const songIds = new Set(songs.map((s) => String(s.id)));
+
+  const addArtist = (id, name, albumCount) => {
+    if (!name) return;
+    const key = String(id || name);
+    if (id && artistsById.has(String(id))) return;
+    if (!id && artistsByName.has(name.toLowerCase())) return;
+    const entry = {
+      id: id || `local:${name}`,
+      name,
+      albumCount: albumCount ?? undefined,
+      _local: !id,
+    };
+    if (id) artistsById.set(String(id), entry);
+    artistsByName.set(name.toLowerCase(), entry);
+  };
+
+  for (const al of cache?.albums || []) {
+    const artist = al.artist || "";
+    const an = artist.toLowerCase();
+    const title = String(al.name || "").toLowerCase();
+    if (an.includes(q) || title.includes(q)) {
+      if (an.includes(q)) addArtist(al.artistId, artist);
+      if (!albumIds.has(String(al.id))) {
+        albums.push(al);
+        albumIds.add(String(al.id));
+      }
+    }
+  }
+  for (const s of cache?.songs || []) {
+    const artist = s.artist || "";
+    const an = artist.toLowerCase();
+    const title = String(s.title || "").toLowerCase();
+    if (an.includes(q) || title.includes(q)) {
+      if (an.includes(q)) addArtist(s.artistId, artist);
+      if (!songIds.has(String(s.id))) {
+        songs.push(s);
+        songIds.add(String(s.id));
+      }
+    }
+  }
+
+  // Prefer real server artist ids; drop pure local stubs if we later open them via search only when id is real
+  const artists = [...artistsById.values()].filter((a) => a.id && !String(a.id).startsWith("local:"));
+  // Also include name-only matches that have artistId from albums
+  for (const a of artistsByName.values()) {
+    if (a.id && !String(a.id).startsWith("local:") && !artistsById.has(String(a.id))) {
+      artists.push(a);
+    }
+  }
+  // Dedupe artists by id
+  const deduped = [];
+  const seen = new Set();
+  for (const a of artists) {
+    const k = String(a.id);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    deduped.push(a);
+  }
+  deduped.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+  return {
+    artists: deduped,
+    albums: albums.slice(0, 40),
+    songs: songs.slice(0, 40),
+  };
 }
 
 function renderSearch({ restoreQuery = "", restoreData = null } = {}) {
@@ -977,10 +1259,22 @@ function renderSearch({ restoreQuery = "", restoreData = null } = {}) {
     timer = setTimeout(async () => {
       results.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
       try {
-        const data = await api.search(q);
+        let data = await api.search(q);
+        data = enrichSearchFromLibrary(q, data);
         lastSearchData = data;
         paintSearchResults(results, data);
       } catch (e) {
+        // Fall back to local-only search if server fails
+        try {
+          const local = enrichSearchFromLibrary(q, { artists: [], albums: [], songs: [] });
+          if (local.artists.length || local.albums.length || local.songs.length) {
+            lastSearchData = local;
+            paintSearchResults(results, local);
+            return;
+          }
+        } catch {
+          /* ignore */
+        }
         results.innerHTML = `<div class="empty-state">${escapeHtml(e.message)}</div>`;
       }
     }, 300);
@@ -1233,10 +1527,36 @@ function renderFavorites() {
   const panel = document.getElementById("favorites-content");
   const songs = getLikedSongs();
   const albums = getFavoriteAlbums();
+  const likedArtists = getLikedArtists().sort((a, b) =>
+    String(a.name || "").localeCompare(String(b.name || ""))
+  );
   const playlists = getPlaylists();
 
   // Thumbs-up list first (same role as old Favorites)
   let html = "";
+  if (likedArtists.length) {
+    html += `
+      <div class="favorites-section">
+        <div class="section-title">👍 Liked artists (${likedArtists.length})</div>
+        <ul class="artist-list">
+          ${likedArtists
+            .map((a) => {
+              const canOpen = a.id && !String(a.id).startsWith("name:");
+              return `
+            <li class="artist-item${canOpen ? "" : " no-nav"}" ${canOpen ? `data-artist="${String(a.id).replace(/"/g, "")}"` : ""}>
+              <div class="artist-avatar"><svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></div>
+              <div class="artist-meta">
+                <span class="artist-name">${escapeHtml(a.name)}</span>
+                <span class="artist-sub">Liked artist</span>
+              </div>
+            </li>`;
+            })
+            .join("")}
+        </ul>
+      </div>
+    `;
+  }
+
   if (songs.length) {
     html += `
       <div class="favorites-section">
@@ -1259,7 +1579,7 @@ function renderFavorites() {
     html += `
       <div class="favorites-section">
         <div class="section-title">👍 Liked songs</div>
-        <div class="empty-state" style="padding-top:0.5rem">No liked songs yet — tap 👍 on any track (same as the old heart favorites).</div>
+        <div class="empty-state" style="padding-top:0.5rem">No liked songs yet — tap 👍 on any track or artist.</div>
       </div>
     `;
   }
@@ -1288,6 +1608,7 @@ function renderFavorites() {
   attachSongClicks(panel, songs);
   attachAlbumClicks(panel, "screen-favorites");
   attachFavoriteHandlers(panel, songs, albums);
+  attachArtistClicks(panel);
 
   panel.querySelector("#btn-open-playlists-from-fav")?.addEventListener("click", openPlaylists);
   panel.querySelector("#btn-play-fav-songs")?.addEventListener("click", () => {
@@ -1719,7 +2040,7 @@ function openSettings() {
 
 function updateBlockedCountBadge() {
   const countEl = document.getElementById("blocked-songs-count");
-  if (countEl) countEl.textContent = String(blockedSongCount());
+  if (countEl) countEl.textContent = String(blockedTotalCount());
 }
 
 function renderBlockedModalList() {
@@ -1728,14 +2049,36 @@ function renderBlockedModalList() {
   const blocked = getBlockedSongs().sort((a, b) =>
     String(a.title || "").localeCompare(String(b.title || ""))
   );
+  const blockedArtists = getBlockedArtists().sort((a, b) =>
+    String(a.name || "").localeCompare(String(b.name || ""))
+  );
   updateBlockedCountBadge();
-  if (!blocked.length) {
-    list.innerHTML = `<p class="settings-hint settings-hint-muted" style="padding:0.5rem 0">No blocked songs yet. Tap 👎 on any track.</p>`;
+  if (!blocked.length && !blockedArtists.length) {
+    list.innerHTML = `<p class="settings-hint settings-hint-muted" style="padding:0.5rem 0">Nothing blocked. 👎 a song or artist to never play on this device.</p>`;
     return;
   }
-  list.innerHTML = `<ul class="blocked-list">${blocked
-    .map(
-      (s) => `
+  let html = "";
+  if (blockedArtists.length) {
+    html += `<div class="section-title" style="margin-top:0.25rem">Artists (${blockedArtists.length})</div><ul class="blocked-list">`;
+    html += blockedArtists
+      .map(
+        (a) => `
+    <li class="blocked-item">
+      <div class="blocked-info">
+        <span class="blocked-title">${escapeHtml(a.name || "Unknown")}</span>
+        <span class="blocked-artist">All songs blocked</span>
+      </div>
+      <button type="button" class="btn secondary blocked-unblock" data-unblock-artist="${String(a.key).replace(/"/g, "")}">Unblock</button>
+    </li>`
+      )
+      .join("");
+    html += "</ul>";
+  }
+  if (blocked.length) {
+    html += `<div class="section-title">Songs (${blocked.length})</div><ul class="blocked-list">`;
+    html += blocked
+      .map(
+        (s) => `
     <li class="blocked-item">
       <div class="blocked-info">
         <span class="blocked-title">${escapeHtml(s.title || "Unknown")}</span>
@@ -1743,12 +2086,23 @@ function renderBlockedModalList() {
       </div>
       <button type="button" class="btn secondary blocked-unblock" data-unblock="${String(s.id).replace(/"/g, "")}">Unblock</button>
     </li>`
-    )
-    .join("")}</ul>`;
+      )
+      .join("");
+    html += "</ul>";
+  }
+  list.innerHTML = html;
   list.querySelectorAll("[data-unblock]").forEach((btn) => {
     btn.addEventListener("click", () => {
       unblockSong(btn.dataset.unblock);
       showToast("Unblocked");
+      renderBlockedModalList();
+      updatePlayingRating(player.current);
+    });
+  });
+  list.querySelectorAll("[data-unblock-artist]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      unblockArtist(btn.dataset.unblockArtist);
+      showToast("Artist unblocked");
       renderBlockedModalList();
       updatePlayingRating(player.current);
     });
@@ -1846,7 +2200,7 @@ function openExternalLink(url) {
 }
 
 function feedbackMailto() {
-  const ver = "2.42";
+  const ver = "2.43";
   const body = [
     "Device / Android version:",
     "TuneFriend version: " + ver,

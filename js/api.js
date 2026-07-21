@@ -476,10 +476,20 @@ export class SubsonicAPI {
   }
 
   async search(query) {
-    const r = await this._fetch("search3.view", { query, songCount: 20, albumCount: 20, artistCount: 20 });
+    // Request more artists — some Subsonic/Navidrome servers under-return artist hits
+    const r = await this._fetch("search3.view", {
+      query,
+      songCount: 30,
+      albumCount: 30,
+      artistCount: 40,
+    });
     const res = r.searchResult3 || r.searchResult || {};
     return {
-      artists: asArray(res.artist).map((a) => ({ id: a.id, name: a.name, albumCount: a.albumCount })),
+      artists: asArray(res.artist).map((a) => ({
+        id: a.id,
+        name: a.name,
+        albumCount: a.albumCount,
+      })),
       albums: asArray(res.album).map((al) => ({
         id: al.id,
         name: al.name,

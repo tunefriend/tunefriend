@@ -14,7 +14,33 @@ const LEGACY_FAVORITES_KEY = "tunefriend_favorites";
 const listeners = new Set();
 
 function emptyData() {
-  return { liked: {}, blocked: {}, albums: {} };
+  return { liked: {}, blocked: {}, blockedArtists: {}, likedArtists: {}, albums: {} };
+}
+
+function artistStorageKey(artist) {
+  const id = sid(artist?.id);
+  if (id && !id.startsWith("local:")) return id;
+  const nk = normalizeArtistKey(artist?.name);
+  return nk ? `name:${nk}` : "";
+}
+
+function artistRecord(artist) {
+  return {
+    id: sid(artist?.id) || "",
+    name: artist?.name || "Unknown artist",
+    nameKey: normalizeArtistKey(artist?.name),
+  };
+}
+
+function normalizeArtistKey(name) {
+  return String(name || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** Wipe old hearts/favorites once so we start clean with thumbs. */
@@ -40,6 +66,14 @@ function loadRaw() {
     return {
       liked: data?.liked && typeof data.liked === "object" ? data.liked : {},
       blocked: data?.blocked && typeof data.blocked === "object" ? data.blocked : {},
+      blockedArtists:
+        data?.blockedArtists && typeof data.blockedArtists === "object"
+          ? data.blockedArtists
+          : {},
+      likedArtists:
+        data?.likedArtists && typeof data.likedArtists === "object"
+          ? data.likedArtists
+          : {},
       albums: data?.albums && typeof data.albums === "object" ? data.albums : {},
     };
   } catch {
@@ -90,6 +124,45 @@ export function isSongLiked(id) {
 export function isSongBlocked(id) {
   const k = sid(id);
   return !!k && !!loadRaw().blocked[k];
+}
+
+function artistMatchesMap(map, artistId, artistName) {
+  if (!map || typeof map !== "object") return false;
+  const id = sid(artistId);
+  if (id && map[id]) return true;
+  const nk = normalizeArtistKey(artistName);
+  if (!nk) return false;
+  if (map[`name:${nk}`]) return true;
+  for (const a of Object.values(map)) {
+    if (a?.nameKey && a.nameKey === nk) return true;
+    if (a?.name && normalizeArtistKey(a.name) === nk) return true;
+  }
+  return false;
+}
+
+/**
+ * Artist blocked by id and/or normalized name (covers songs without artistId).
+ */
+export function isArtistBlocked(artistId, artistName) {
+  return artistMatchesMap(loadRaw().blockedArtists, artistId, artistName);
+}
+
+export function isArtistLiked(artistId, artistName) {
+  return artistMatchesMap(loadRaw().likedArtists, artistId, artistName);
+}
+
+/** @returns {"up"|"down"|"none"} */
+export function getArtistRating(artistId, artistName) {
+  if (isArtistBlocked(artistId, artistName)) return "down";
+  if (isArtistLiked(artistId, artistName)) return "up";
+  return "none";
+}
+
+/** True if song is blocked directly or via blocked artist. */
+export function isSongPlayBlocked(song) {
+  if (!song) return true;
+  if (isSongBlocked(song.id)) return true;
+  return isArtistBlocked(song.artistId, song.artist);
 }
 
 /** @deprecated use isSongLiked */
@@ -161,15 +234,136 @@ export function unblockSong(id) {
   return true;
 }
 
+/**
+ * Like/unlike whole artist on this device (clears block if set).
+ * @returns {"up"|"none"}
+ */
+export function setArtistThumbsUp(artist) {
+  const key = artistStorageKey(artist);
+  if (!key) return "none";
+  const data = loadRaw();
+  if (data.likedArtists[key] || isArtistLiked(artist?.id, artist?.name)) {
+    // Remove any matching liked keys for this artist
+    for (const k of Object.keys(data.likedArtists)) {
+      const a = data.likedArtists[k];
+      if (
+        k === key ||
+        (artist?.id && sid(a?.id) === sid(artist.id)) ||
+        (a?.nameKey && a.nameKey === normalizeArtistKey(artist?.name))
+      ) {
+        delete data.likedArtists[k];
+      }
+    }
+    saveRaw(data);
+    return "none";
+  }
+  // Clear block when liking
+  for (const k of Object.keys(data.blockedArtists)) {
+    const a = data.blockedArtists[k];
+    if (
+      k === key ||
+      (artist?.id && sid(a?.id) === sid(artist.id)) ||
+      (a?.nameKey && a.nameKey === normalizeArtistKey(artist?.name))
+    ) {
+      delete data.blockedArtists[k];
+    }
+  }
+  data.likedArtists[key] = artistRecord(artist);
+  saveRaw(data);
+  return "up";
+}
+
+/**
+ * Block/unblock whole artist on this device (clears like if set).
+ * @returns {"down"|"none"}
+ */
+export function setArtistThumbsDown(artist) {
+  const key = artistStorageKey(artist);
+  if (!key) return "none";
+  const data = loadRaw();
+  if (data.blockedArtists[key] || isArtistBlocked(artist?.id, artist?.name)) {
+    for (const k of Object.keys(data.blockedArtists)) {
+      const a = data.blockedArtists[k];
+      if (
+        k === key ||
+        (artist?.id && sid(a?.id) === sid(artist.id)) ||
+        (a?.nameKey && a.nameKey === normalizeArtistKey(artist?.name))
+      ) {
+        delete data.blockedArtists[k];
+      }
+    }
+    saveRaw(data);
+    return "none";
+  }
+  // Clear like when blocking
+  for (const k of Object.keys(data.likedArtists)) {
+    const a = data.likedArtists[k];
+    if (
+      k === key ||
+      (artist?.id && sid(a?.id) === sid(artist.id)) ||
+      (a?.nameKey && a.nameKey === normalizeArtistKey(artist?.name))
+    ) {
+      delete data.likedArtists[k];
+    }
+  }
+  data.blockedArtists[key] = artistRecord(artist);
+  saveRaw(data);
+  return "down";
+}
+
+export function unblockArtist(key) {
+  const k = sid(key);
+  const data = loadRaw();
+  if (!k || !data.blockedArtists[k]) return false;
+  delete data.blockedArtists[k];
+  saveRaw(data);
+  return true;
+}
+
+export function unlikeArtist(key) {
+  const k = sid(key);
+  const data = loadRaw();
+  if (!k || !data.likedArtists[k]) return false;
+  delete data.likedArtists[k];
+  saveRaw(data);
+  return true;
+}
+
+export function getBlockedArtists() {
+  return Object.entries(loadRaw().blockedArtists).map(([key, a]) => ({
+    key,
+    id: a?.id || "",
+    name: a?.name || "Unknown artist",
+  }));
+}
+
+export function getLikedArtists() {
+  return Object.entries(loadRaw().likedArtists).map(([key, a]) => ({
+    key,
+    id: a?.id || "",
+    name: a?.name || "Unknown artist",
+  }));
+}
+
+export function blockedArtistCount() {
+  return Object.keys(loadRaw().blockedArtists).length;
+}
+
+export function likedArtistCount() {
+  return Object.keys(loadRaw().likedArtists).length;
+}
+
 export function clearAllBlocked() {
   const data = loadRaw();
   data.blocked = {};
+  data.blockedArtists = {};
   saveRaw(data);
 }
 
 export function clearAllLiked() {
   const data = loadRaw();
   data.liked = {};
+  data.likedArtists = {};
   saveRaw(data);
 }
 
@@ -208,11 +402,16 @@ export function blockedSongCount() {
   return Object.keys(loadRaw().blocked).length;
 }
 
+/** Songs + artists blocked (for Settings badge). */
+export function blockedTotalCount() {
+  return blockedSongCount() + blockedArtistCount();
+}
+
 export function filterPlayableSongs(songs) {
-  const data = loadRaw();
   return (songs || []).filter((s) => {
     const id = sid(s?.id);
-    return id && !data.blocked[id];
+    if (!id) return false;
+    return !isSongPlayBlocked(s);
   });
 }
 

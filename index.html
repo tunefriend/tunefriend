@@ -156,6 +156,7 @@
           <button class="btn primary settings-btn-block" id="btn-sync-library">Sync Library</button>
           <p class="settings-hint">Downloads and saves your full library on this device (fast search3 sync). Sync once — then Songs, Albums, and Genres open instantly.</p>
           <p class="settings-hint"><strong>Overnight play:</strong> allow Notifications when asked, and set Battery → Unrestricted. Without those, Android/GrapheneOS will pause music after the screen is off for a while — opening the app then “magically” resumes it.</p>
+          <p class="settings-hint"><strong>Android Auto:</strong> Sideloaded APKs (not from Play Store) often do not appear until you enable <em>Unknown sources</em> in Android Auto developer settings. Open the Android Auto app on the phone → About → tap Version 10× → enable Unknown sources. Then open TuneFriend once, thumbs-up some songs or start playback, and reconnect the car.</p>
         </div>
 
         <div class="settings-group">
@@ -176,9 +177,9 @@
 
         <div class="settings-group">
           <h3>Thumbs up / down</h3>
-          <p class="settings-hint">👍 adds to <strong>Liked</strong> (top bar) · 👎 never plays on this device.</p>
+          <p class="settings-hint">👍 adds to <strong>Liked</strong> (top bar) · 👎 never plays that song (or whole artist) on this device.</p>
           <div class="settings-row">
-            <span class="settings-label">Blocked songs</span>
+            <span class="settings-label">Blocked (songs + artists)</span>
             <span class="settings-value" id="blocked-songs-count">0</span>
           </div>
           <div class="settings-actions">
@@ -193,7 +194,7 @@
           <h3>About</h3>
           <div class="settings-row">
             <span class="settings-label">Version</span>
-            <span class="settings-value">2.42</span>
+            <span class="settings-value">2.43</span>
           </div>
           <div class="settings-actions">
             <button type="button" class="btn primary settings-btn-block" id="btn-feedback">Send feedback</button>
