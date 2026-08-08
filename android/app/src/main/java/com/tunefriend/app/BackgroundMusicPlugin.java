@@ -137,6 +137,32 @@ public class BackgroundMusicPlugin extends Plugin {
         call.resolve();
     }
 
+    /**
+     * Sync full liked/blocked id lists so the Now Playing widget can highlight thumbs.
+     * likedIdsJson / blockedIdsJson: JSON string arrays of track ids.
+     */
+    @PluginMethod
+    public void syncRatingsForWidget(PluginCall call) {
+        WidgetRatingStore.syncFromWeb(
+            getContext(),
+            call.getString("likedIdsJson", "[]"),
+            call.getString("blockedIdsJson", "[]")
+        );
+        PlaybackWidgetUpdater.updateAll(getContext());
+        call.resolve();
+    }
+
+    /**
+     * Drain pending thumbs from home widgets so JS can write localStorage favorites.
+     */
+    @PluginMethod
+    public void drainWidgetRatings(PluginCall call) {
+        String json = WidgetRatingStore.drainPendingJson(getContext());
+        JSObject ret = new JSObject();
+        ret.put("ratingsJson", json);
+        call.resolve(ret);
+    }
+
     private void putModeExtras(Intent intent, PluginCall call) {
         JSObject data = call.getData();
         if (data == null) return;

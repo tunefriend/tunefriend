@@ -8,7 +8,7 @@ Categories:
   - Multimedia
 License: GPL-3.0-or-later
 AuthorName: James
-AuthorEmail: tunefriend.music@proton.me
+AuthorEmail: Tuxbased80@gmail.com
 SourceCode: https://github.com/tunefriend/tunefriend
 IssueTracker: https://github.com/tunefriend/tunefriend/issues
 Donate: https://liberapay.com/west66/donate
@@ -47,5 +47,8 @@ Builds:
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
 UpdateCheckData: android/app/build.gradle|versionCode\s(\d+)|.|versionName\s\"([^\"]+)\"
-CurrentVersion: '2.5'
-CurrentVersionCode: 15
+# Local template only — live metadata is in fdroid/fdroiddata on GitLab.
+# AutoUpdateMode + Tags means F-Droid's checkupdates bot picks up GitHub tags
+# (v2.44 etc.) without a manual GitLab MR in the normal case.
+CurrentVersion: '2.44'
+CurrentVersionCode: 58

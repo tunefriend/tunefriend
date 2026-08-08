@@ -92,4 +92,46 @@ public final class AutoLibraryStore {
     public static int likedCount(Context ctx) {
         return loadLiked(ctx).size();
     }
+
+    public static void upsertLikedTrack(Context ctx, LikedTrack track) {
+        if (ctx == null || track == null || track.url == null || track.url.isEmpty()) return;
+        try {
+            List<LikedTrack> list = loadLiked(ctx);
+            JSONArray arr = new JSONArray();
+            boolean replaced = false;
+            for (LikedTrack t : list) {
+                if (t.trackId != null && t.trackId.equals(track.trackId)) {
+                    arr.put(likedToJson(track));
+                    replaced = true;
+                } else {
+                    arr.put(likedToJson(t));
+                }
+            }
+            if (!replaced) arr.put(likedToJson(track));
+            saveLikedJson(ctx, arr.toString());
+        } catch (Exception ignored) {}
+    }
+
+    public static void removeLikedTrack(Context ctx, String trackId) {
+        if (ctx == null || trackId == null || trackId.isEmpty()) return;
+        try {
+            List<LikedTrack> list = loadLiked(ctx);
+            JSONArray arr = new JSONArray();
+            for (LikedTrack t : list) {
+                if (t.trackId != null && t.trackId.equals(trackId)) continue;
+                arr.put(likedToJson(t));
+            }
+            saveLikedJson(ctx, arr.toString());
+        } catch (Exception ignored) {}
+    }
+
+    private static JSONObject likedToJson(LikedTrack t) throws Exception {
+        JSONObject o = new JSONObject();
+        o.put("trackId", t.trackId != null ? t.trackId : "");
+        o.put("title", t.title != null ? t.title : "");
+        o.put("artist", t.artist != null ? t.artist : "");
+        o.put("artworkUrl", t.artworkUrl != null ? t.artworkUrl : "");
+        o.put("url", t.url != null ? t.url : "");
+        return o;
+    }
 }

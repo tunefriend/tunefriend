@@ -11,7 +11,12 @@
 import { SubsonicAPI, saveConfig, loadConfig, clearConfig, initConfigStore, formatDuration, isNativeApp } from "./api.js";
 import { Player, bindPlayerUI } from "./player.js";
 import { setupMediaSession } from "./media-session.js";
-import { nativeSyncLikedForAuto, canUseNativePlayer } from "./native-player-bridge.js";
+import {
+  nativeSyncLikedForAuto,
+  nativeSyncRatingsForWidget,
+  nativeDrainWidgetRatings,
+  canUseNativePlayer,
+} from "./native-player-bridge.js";
 import { loadSettings, saveSettings } from "./settings.js";
 import {
   isSongLiked,
@@ -270,7 +275,7 @@ function coverImg(coverArt, size = 300) {
 
 function renderAlbumCard(al) {
   return `
-    <div class="album-card-wrap">
+    <div class="album-card-wrap" data-album-longpress="${al.id}">
       <button class="album-card" data-album="${al.id}">
         <div class="album-cover-wrap">${coverImg(al.coverArt)}</div>
         <div class="album-name">${escapeHtml(al.name)}</div>
@@ -368,6 +373,15 @@ function setupContentDelegation(container) {
   if (container._delegated) return;
   container._delegated = true;
   container.addEventListener("click", (e) => {
+    if (container._suppressAlbumClick) {
+      container._suppressAlbumClick = false;
+      const albumBtn = e.target.closest("[data-album]");
+      if (albumBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    }
     const upBtn = e.target.closest("[data-rate-up]");
     if (upBtn) {
       e.preventDefault();
@@ -419,6 +433,45 @@ function setupContentDelegation(container) {
       player.play(withUrls, parseInt(songItem.dataset.songIdx, 10));
       highlightPlaying();
     }
+  });
+
+  // Long-press / right-click album → add to playlist
+  let lpTimer = null;
+  let lpAlbumId = null;
+  const clearLp = () => {
+    if (lpTimer) clearTimeout(lpTimer);
+    lpTimer = null;
+    lpAlbumId = null;
+  };
+  const startLp = (albumId) => {
+    clearLp();
+    lpAlbumId = albumId;
+    lpTimer = setTimeout(() => {
+      const id = lpAlbumId;
+      clearLp();
+      if (!id) return;
+      container._suppressAlbumClick = true;
+      const album = findListAlbum(container, id) || { id };
+      openAlbumPlaylistModal(album);
+    }, 480);
+  };
+  container.addEventListener("touchstart", (e) => {
+    if (e.target.closest("[data-fav-album]")) return;
+    const wrap = e.target.closest("[data-album-longpress]");
+    if (!wrap) return;
+    startLp(wrap.dataset.albumLongpress);
+  }, { passive: true });
+  container.addEventListener("touchend", clearLp, { passive: true });
+  container.addEventListener("touchcancel", clearLp, { passive: true });
+  container.addEventListener("touchmove", clearLp, { passive: true });
+  container.addEventListener("contextmenu", (e) => {
+    const wrap = e.target.closest("[data-album-longpress]");
+    if (!wrap) return;
+    e.preventDefault();
+    clearLp();
+    const album = findListAlbum(container, wrap.dataset.albumLongpress)
+      || { id: wrap.dataset.albumLongpress };
+    openAlbumPlaylistModal(album);
   });
 }
 
@@ -2124,6 +2177,129 @@ function closeBlockedModal() {
   document.body.classList.remove("modal-open");
 }
 
+/** @type {{ id: string, name?: string, artist?: string } | null} */
+let albumPlaylistTarget = null;
+
+function closeAlbumPlaylistModal() {
+  const modal = document.getElementById("album-playlist-modal");
+  if (!modal) return;
+  modal.hidden = true;
+  albumPlaylistTarget = null;
+  const nameInput = document.getElementById("album-pl-new-name");
+  if (nameInput) nameInput.value = "";
+  if (document.getElementById("blocked-modal")?.hidden !== false) {
+    document.body.classList.remove("modal-open");
+  }
+}
+
+function renderAlbumPlaylistPicker() {
+  const listEl = document.getElementById("album-pl-modal-list");
+  if (!listEl) return;
+  const playlists = getPlaylists();
+  if (!playlists.length) {
+    listEl.innerHTML = '<div class="empty-state">No playlists yet — create one below</div>';
+    return;
+  }
+  listEl.innerHTML = `<ul class="album-pl-list">${playlists.map((pl) => `
+    <li>
+      <button type="button" class="album-pl-item" data-add-album-to-pl="${pl.id}">
+        <span class="album-pl-item-name">${escapeHtml(pl.name)}</span>
+        <span class="album-pl-item-meta">${pl.tracks?.length || 0} tracks</span>
+      </button>
+    </li>
+  `).join("")}</ul>`;
+  listEl.querySelectorAll("[data-add-album-to-pl]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      addAlbumToPlaylistById(btn.dataset.addAlbumToPl);
+    });
+  });
+}
+
+function openAlbumPlaylistModal(album) {
+  if (!album?.id || !api) {
+    showToast("Album not available");
+    return;
+  }
+  albumPlaylistTarget = album;
+  const modal = document.getElementById("album-playlist-modal");
+  if (!modal) return;
+  const title = document.getElementById("album-pl-modal-title");
+  const hint = document.getElementById("album-pl-modal-hint");
+  const label = album.name
+    ? `${album.name}${album.artist ? ` · ${album.artist}` : ""}`
+    : "This album";
+  if (title) title.textContent = "Add album to playlist";
+  if (hint) hint.textContent = `Add all tracks from “${label}” to a playlist.`;
+  renderAlbumPlaylistPicker();
+  modal.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+async function loadAlbumSongsForPlaylist(albumId) {
+  // Prefer already-loaded detail if it matches
+  try {
+    const album = await api.getAlbum(albumId);
+    return Array.isArray(album?.songs) ? album.songs : [];
+  } catch (e) {
+    throw e;
+  }
+}
+
+async function addAlbumToPlaylistById(playlistId) {
+  const album = albumPlaylistTarget;
+  if (!album?.id || !playlistId) return;
+  try {
+    showToast("Loading album tracks…");
+    const songs = await loadAlbumSongsForPlaylist(album.id);
+    if (!songs.length) {
+      showToast("No tracks on this album");
+      return;
+    }
+    const added = addTracksToPlaylist(playlistId, songs);
+    const pl = getPlaylist(playlistId);
+    closeAlbumPlaylistModal();
+    if (added === 0) {
+      showToast(`Already in “${pl?.name || "playlist"}”`);
+    } else {
+      showToast(`Added ${added} track${added === 1 ? "" : "s"} to “${pl?.name || "playlist"}”`);
+    }
+    if (document.getElementById("screen-playlists")?.classList.contains("active")) {
+      renderPlaylistsScreen();
+    }
+  } catch (e) {
+    showToast(e?.message || "Could not add album");
+  }
+}
+
+async function createPlaylistAndAddAlbum() {
+  const nameInput = document.getElementById("album-pl-new-name");
+  const name = String(nameInput?.value || "").trim();
+  if (!name) {
+    showToast("Enter a playlist name");
+    nameInput?.focus();
+    return;
+  }
+  try {
+    const pl = createPlaylist(name);
+    await addAlbumToPlaylistById(pl.id);
+  } catch (e) {
+    showToast(e?.message || "Could not create playlist");
+  }
+}
+
+document.getElementById("btn-close-album-pl-modal")?.addEventListener("click", closeAlbumPlaylistModal);
+document.getElementById("btn-done-album-pl-modal")?.addEventListener("click", closeAlbumPlaylistModal);
+document.querySelector("[data-close-album-pl-modal]")?.addEventListener("click", closeAlbumPlaylistModal);
+document.getElementById("btn-album-pl-create")?.addEventListener("click", () => {
+  createPlaylistAndAddAlbum();
+});
+document.getElementById("album-pl-new-name")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    createPlaylistAndAddAlbum();
+  }
+});
+
 document.getElementById("btn-view-blocked")?.addEventListener("click", openBlockedModal);
 document.getElementById("btn-close-blocked-modal")?.addEventListener("click", closeBlockedModal);
 document.getElementById("btn-done-blocked-modal")?.addEventListener("click", closeBlockedModal);
@@ -2183,7 +2359,7 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
 document.getElementById("btn-settings")?.addEventListener("click", openSettings);
 
 const DONATE_URL = "https://liberapay.com/west66/donate";
-const FEEDBACK_EMAIL = "tunefriend.music@proton.me";
+const FEEDBACK_EMAIL = "Tuxbased80@gmail.com";
 
 function openExternalLink(url) {
   try {
@@ -2345,6 +2521,62 @@ function syncLikedToAndroidAuto() {
       url: api.streamUrl(s.id, { transcode: false }),
     }));
     nativeSyncLikedForAuto(tracks);
+    // Keep Now Playing widget 👍/👎 highlights in sync with localStorage
+    const likedIds = songs.map((s) => String(s.id));
+    const blockedIds = getBlockedSongs().map((s) => String(s.id));
+    nativeSyncRatingsForWidget(likedIds, blockedIds);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Apply 👍/👎 taps from the home-screen Now Playing widget into favorites.
+ * Native queues them so ratings work even while the WebView was asleep.
+ */
+async function applyWidgetRatings() {
+  if (!isNativeApp() || !canUseNativePlayer()) return;
+  try {
+    const ratings = await nativeDrainWidgetRatings();
+    if (!ratings?.length) return;
+    let applied = 0;
+    for (const r of ratings) {
+      const id = r?.trackId || r?.id;
+      if (!id) continue;
+      const song = {
+        id,
+        title: r.title || "Unknown",
+        artist: r.artist || "",
+        coverArt: null,
+        coverArtUrl: r.artworkUrl || "",
+      };
+      // Widget queues absolute final state ("up"|"down"|"none") after toggle
+      const want = r.action === "up" || r.action === "down" || r.action === "none"
+        ? r.action
+        : null;
+      if (!want) continue;
+      const cur = getSongRating(id);
+      if (cur === want) continue;
+      if (want === "up") {
+        if (cur === "down") setSongThumbsDown(song); // clear block first (toggle)
+        if (getSongRating(id) !== "up") setSongThumbsUp(song);
+      } else if (want === "down") {
+        if (cur === "up") setSongThumbsUp(song);
+        if (getSongRating(id) !== "down") setSongThumbsDown(song);
+      } else {
+        // none
+        if (cur === "up") setSongThumbsUp(song);
+        else if (cur === "down") setSongThumbsDown(song);
+      }
+      applied++;
+    }
+    if (applied) {
+      syncLikedToAndroidAuto();
+      updatePlayingRating(player.current);
+      if (document.getElementById("screen-favorites")?.classList.contains("active")) {
+        renderFavorites();
+      }
+    }
   } catch {
     /* ignore */
   }
@@ -2507,18 +2739,22 @@ async function init() {
 }
 
 let syncNativeTimer = null;
-function scheduleNativeSync() {
+function scheduleNativeSync(delayMs = 200) {
   if (!api) return;
   clearTimeout(syncNativeTimer);
-  syncNativeTimer = setTimeout(() => player.syncFromNative?.(), 800);
+  // Faster resume when returning to the app after Doze stalls
+  syncNativeTimer = setTimeout(() => {
+    applyWidgetRatings();
+    player.syncFromNative?.();
+  }, delayMs);
 }
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") scheduleNativeSync();
+  if (document.visibilityState === "visible") scheduleNativeSync(150);
 });
 if (isNativeApp()) {
   import("@capacitor/app").then(({ App }) => {
     App.addListener("appStateChange", ({ isActive }) => {
-      if (isActive) scheduleNativeSync();
+      if (isActive) scheduleNativeSync(100);
     });
   }).catch(() => {});
 }

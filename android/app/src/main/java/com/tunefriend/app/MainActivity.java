@@ -63,6 +63,28 @@ public class MainActivity extends BridgeActivity {
         configureWebView();
     }
 
+    @Override
+    public void onResume() {
+        super.onResume();
+        // Kick the playback service when the UI comes back — matches the
+        // "music starts again the second I open the app" path, but without
+        // waiting for the WebView / JS sync timer.
+        nudgePlaybackService();
+    }
+
+    private void nudgePlaybackService() {
+        // Only ping an already-running service. startForegroundService while idle
+        // would crash if we never call startForeground (Android 8+ FGS timeout).
+        if (!MusicPlaybackService.isAlive()) return;
+        try {
+            Intent intent = new Intent(this, MusicPlaybackService.class);
+            intent.setAction(MusicPlaybackService.ACTION_ENSURE_PLAYING);
+            startService(intent);
+        } catch (Exception ignored) {
+            /* service may be mid-teardown */
+        }
+    }
+
     /**
      * Overnight play needs a visible media notification + battery exemption.
      * GrapheneOS / stock Android often default these off for new installs.

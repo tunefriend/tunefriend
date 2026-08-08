@@ -405,6 +405,64 @@ a.btn {
   gap: 1rem;
 }
 
+.album-pl-create {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.album-pl-create input {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid #2a2a3a;
+  background: var(--bg-card, #1a1a24);
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.album-pl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.album-pl-item {
+  width: 100%;
+  text-align: left;
+  padding: 0.75rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid #2a2a3a;
+  background: var(--bg-card, #1a1a24);
+  color: var(--text);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font: inherit;
+}
+
+.album-pl-item:active {
+  opacity: 0.75;
+  background: #22222e;
+}
+
+.album-pl-item-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.album-pl-item-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted, #888);
+  white-space: nowrap;
+}
+
 .album-card-wrap {
   position: relative;
 }

@@ -14,7 +14,10 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -22,6 +25,7 @@ import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -69,6 +73,12 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
     public static final String ACTION_PREVIOUS = "PREVIOUS";
     public static final String ACTION_NEXT = "NEXT";
     public static final String ACTION_SET_NEXT = "SET_NEXT";
+    /** Re-check focus + restart stalled stream (screen on / app resume / widget). */
+    public static final String ACTION_ENSURE_PLAYING = "ENSURE_PLAYING";
+    public static final String ACTION_TOGGLE = "TOGGLE";
+    public static final String ACTION_SHUFFLE_LIKED = "SHUFFLE_LIKED";
+    public static final String ACTION_THUMBS_UP = "THUMBS_UP";
+    public static final String ACTION_THUMBS_DOWN = "THUMBS_DOWN";
 
     private static PlaybackCallback callback;
     private static MediaControlCallback mediaControlCallback;
@@ -77,9 +87,11 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
     private MediaPlayer mediaPlayer;
     private MediaSessionCompat mediaSession;
     private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
     private AudioManager audioManager;
     private AudioFocusRequest audioFocusRequest;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private BroadcastReceiver screenOnReceiver;
 
     private String currentTitle = "";
     private String currentArtist = "";
@@ -104,9 +116,13 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
     private long lastResumeAt = 0;
     private int errorSkipCount = 0;
     private int reloadAttemptCount = 0;
+    private int lastProgressPosMs = -1;
+    private long lastProgressAt = 0;
 
-    private static final long RESUME_WATCHDOG_MS = 30000;
-    private static final long PLAYBACK_HEALTH_MS = 30000;
+    // Faster recovery: Doze + network streams stall without frequent checks.
+    private static final long RESUME_WATCHDOG_MS = 8000;
+    private static final long PLAYBACK_HEALTH_MS = 12000;
+    private static final long STALL_POSITION_MS = 8000;
     private static final long FOCUS_RESUME_DELAY_MS = 400;
     private final Runnable resumeWatchdog = this::runResumeWatchdog;
     private final Runnable playbackHealthCheck = this::runPlaybackHealthCheck;
@@ -215,6 +231,11 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
         return instance != null && instance.wantsToPlay;
     }
 
+    /** True while the media service process object exists (may be paused). */
+    public static boolean isAlive() {
+        return instance != null;
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -222,6 +243,38 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
         audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
         createNotificationChannel();
         initMediaSession();
+        registerScreenOnReceiver();
+    }
+
+    private void registerScreenOnReceiver() {
+        if (screenOnReceiver != null) return;
+        screenOnReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (intent == null) return;
+                String action = intent.getAction();
+                if (Intent.ACTION_SCREEN_ON.equals(action)
+                        || Intent.ACTION_USER_PRESENT.equals(action)) {
+                    mainHandler.post(() -> ensurePlaying("screen_on"));
+                }
+            }
+        };
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_SCREEN_ON);
+        filter.addAction(Intent.ACTION_USER_PRESENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(screenOnReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(screenOnReceiver, filter);
+        }
+    }
+
+    private void unregisterScreenOnReceiver() {
+        if (screenOnReceiver == null) return;
+        try {
+            unregisterReceiver(screenOnReceiver);
+        } catch (Exception ignored) {}
+        screenOnReceiver = null;
     }
 
     private void initMediaSession() {
@@ -311,6 +364,27 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
                 wantsToPlay = true;
                 resume();
                 break;
+            case ACTION_TOGGLE:
+                if (wantsToPlay && isPlayingNow()) {
+                    pauseFromUser();
+                } else {
+                    userPaused = false;
+                    wantsToPlay = true;
+                    ensurePlaying("toggle");
+                }
+                break;
+            case ACTION_ENSURE_PLAYING:
+                ensurePlaying("intent");
+                break;
+            case ACTION_SHUFFLE_LIKED:
+                shuffleLikedTracks();
+                break;
+            case ACTION_THUMBS_UP:
+                rateCurrentTrack("up");
+                break;
+            case ACTION_THUMBS_DOWN:
+                rateCurrentTrack("down");
+                break;
             case ACTION_STOP:
                 stopPlayback();
                 break;
@@ -328,6 +402,144 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
                 break;
         }
         return START_STICKY;
+    }
+
+    /** Widget / lock-screen thumbs for the current track. */
+    private void rateCurrentTrack(String action) {
+        if (currentTrackId == null || currentTrackId.isEmpty()) {
+            PlaybackWidgetUpdater.updateAll(this);
+            return;
+        }
+        String prev = WidgetRatingStore.ratingFor(this, currentTrackId);
+        WidgetRatingStore.queueRating(
+            this,
+            currentTrackId,
+            currentTitle,
+            currentArtist,
+            currentArtworkUrl,
+            currentUrl,
+            action
+        );
+        // Keep Auto / Shuffle Liked in sync when thumbing up without opening the app
+        if ("up".equals(action)) {
+            if ("up".equals(prev)) {
+                AutoLibraryStore.removeLikedTrack(this, currentTrackId);
+            } else {
+                AutoLibraryStore.LikedTrack t = new AutoLibraryStore.LikedTrack();
+                t.trackId = currentTrackId;
+                t.title = currentTitle;
+                t.artist = currentArtist;
+                t.artworkUrl = currentArtworkUrl;
+                t.url = currentUrl;
+                AutoLibraryStore.upsertLikedTrack(this, t);
+            }
+        } else if ("down".equals(action)) {
+            AutoLibraryStore.removeLikedTrack(this, currentTrackId);
+            // Skip so the blocked song doesn't keep playing
+            if (!"down".equals(prev)) {
+                if (!advanceToNextTrack()) {
+                    dispatchSkipNext();
+                }
+            }
+        }
+        PlaybackWidgetUpdater.updateAll(this);
+    }
+
+    /**
+     * Heal silent stalls after Doze / screen-off / app background.
+     * Opening the app used to be the only reliable kick — this runs the same path
+     * from screen-on, MainActivity onResume, health checks, and widgets.
+     */
+    private void ensurePlaying(String reason) {
+        if (userPaused || !wantsToPlay) {
+            PlaybackWidgetUpdater.updateAll(this);
+            return;
+        }
+        // Focus can be quietly lost overnight; re-request before starting audio.
+        if (!hasAudioFocus) {
+            requestAudioFocus();
+        }
+        acquireWakeLock();
+        acquireWifiLock();
+        if (mediaSession != null && !mediaSession.isActive()) {
+            mediaSession.setActive(true);
+        }
+        if (isPrepared && mediaPlayer != null) {
+            if (isPlaybackStalled()) {
+                reloadAttemptCount = 0;
+                reloadCurrentTrackAt(getPositionMs());
+            } else {
+                recoverPlayback();
+            }
+            schedulePlaybackHealthCheck();
+        } else if (currentUrl != null && !currentUrl.isEmpty()) {
+            reloadAttemptCount = 0;
+            reloadCurrentTrackAt(Math.max(0, getPositionMs()));
+        }
+        PlaybackWidgetUpdater.updateAll(this);
+    }
+
+    private void shuffleLikedTracks() {
+        List<AutoLibraryStore.LikedTrack> liked = AutoLibraryStore.loadLiked(this);
+        if (liked == null || liked.isEmpty()) {
+            // If we were started as FGS from a widget, post a short notification then stop.
+            currentTitle = "No liked songs";
+            currentArtist = "👍 tracks in TuneFriend first";
+            wantsToPlay = false;
+            startForegroundNow(buildNotification(false));
+            PlaybackWidgetUpdater.updateAll(this);
+            mainHandler.postDelayed(() -> {
+                try {
+                    stopForeground(STOP_FOREGROUND_REMOVE);
+                    stopSelf();
+                } catch (Exception ignored) {}
+            }, 2500);
+            return;
+        }
+        ArrayList<TrackInfo> tracks = new ArrayList<>();
+        for (AutoLibraryStore.LikedTrack t : liked) {
+            if (t == null || t.url == null || t.url.isEmpty()) continue;
+            TrackInfo info = new TrackInfo();
+            info.url = t.url;
+            info.title = t.title != null ? t.title : "";
+            info.artist = t.artist != null ? t.artist : "";
+            info.artworkUrl = t.artworkUrl != null ? t.artworkUrl : "";
+            info.trackId = t.trackId != null ? t.trackId : "";
+            tracks.add(info);
+        }
+        if (tracks.isEmpty()) {
+            currentTitle = "No stream URLs";
+            currentArtist = "Open app and re-sync Liked";
+            wantsToPlay = false;
+            startForegroundNow(buildNotification(false));
+            PlaybackWidgetUpdater.updateAll(this);
+            mainHandler.postDelayed(() -> {
+                try {
+                    stopForeground(STOP_FOREGROUND_REMOVE);
+                    stopSelf();
+                } catch (Exception ignored) {}
+            }, 2500);
+            return;
+        }
+        // Fisher–Yates shuffle
+        for (int i = tracks.size() - 1; i > 0; i--) {
+            int j = random.nextInt(i + 1);
+            TrackInfo tmp = tracks.get(i);
+            tracks.set(i, tracks.get(j));
+            tracks.set(j, tmp);
+        }
+        playQueue.clear();
+        playQueue.addAll(tracks);
+        queueIndex = 0;
+        queueShuffle = true;
+        queueRepeat = true;
+        recentArtists.clear();
+        recentTrackIds.clear();
+        TrackInfo first = tracks.get(0);
+        play(first.url, first.title, first.artist, first.artworkUrl, first.trackId,
+            null, "", "", "", "");
+        refreshLegacyNextFromQueue();
+        notifyBrowseTreeChanged();
     }
 
     private void setNextTrackInfo(String url, String title, String artist, String artworkUrl, String trackId) {
@@ -525,7 +737,10 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
 
         releasePlayer();
         acquireWakeLock();
+        acquireWifiLock();
         requestAudioFocus();
+        lastProgressPosMs = -1;
+        lastProgressAt = SystemClock.elapsedRealtime();
 
         mediaPlayer = new MediaPlayer();
         mediaPlayer.setAudioAttributes(
@@ -543,6 +758,8 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
                 errorSkipCount = 0;
                 reloadAttemptCount = 0;
                 userPaused = false;
+                lastProgressPosMs = -1;
+                lastProgressAt = SystemClock.elapsedRealtime();
                 if (pendingSeekMs > 0) {
                     try {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -554,6 +771,7 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
                     pendingSeekMs = 0;
                 }
                 if (wantsToPlay) {
+                    if (!hasAudioFocus) requestAudioFocus();
                     mp.start();
                     isPaused = false;
                 }
@@ -561,6 +779,7 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
                 schedulePlaybackHealthCheck();
                 updatePlaybackState(wantsToPlay && mp.isPlaying());
                 updateNotification(wantsToPlay && mp.isPlaying());
+                PlaybackWidgetUpdater.updateAll(MusicPlaybackService.this);
                 if (callback != null) callback.onPrepared();
             });
             mediaPlayer.setOnCompletionListener(mp -> {
@@ -718,17 +937,16 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
             shouldResumeAfterFocus = shouldResumeAfterFocus || wantsToPlay;
             return;
         }
-        if (shouldResumeAfterFocus || (wantsToPlay && isPrepared && !isPlayingNow())) {
+        if (shouldResumeAfterFocus || (wantsToPlay && !isPlayingNow()) || isPlaybackStalled()) {
             lastResumeAt = SystemClock.elapsedRealtime();
-            recoverPlayback();
+            ensurePlaying("focus_gain");
             if (isPlayingNow()) schedulePlaybackHealthCheck();
         }
         shouldResumeAfterFocus = false;
     }
 
     private void scheduleResumeWatchdog() {
-        // Watchdog only heals silent stalls while we still hold audio focus.
-        if (userPaused || !wantsToPlay || !isPrepared || !hasAudioFocus) return;
+        if (userPaused || !wantsToPlay || !isPrepared) return;
         mainHandler.removeCallbacks(resumeWatchdog);
         mainHandler.postDelayed(resumeWatchdog, RESUME_WATCHDOG_MS);
     }
@@ -738,7 +956,7 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
     }
 
     private void schedulePlaybackHealthCheck() {
-        if (userPaused || !wantsToPlay || !hasAudioFocus) return;
+        if (userPaused || !wantsToPlay) return;
         mainHandler.removeCallbacks(playbackHealthCheck);
         mainHandler.postDelayed(playbackHealthCheck, PLAYBACK_HEALTH_MS);
     }
@@ -747,21 +965,68 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
         mainHandler.removeCallbacks(playbackHealthCheck);
     }
 
+    /** True when MediaPlayer reports playing (or prepared) but position is frozen — common after Doze. */
+    private boolean isPlaybackStalled() {
+        if (userPaused || !wantsToPlay || !isPrepared || mediaPlayer == null) return false;
+        int pos;
+        try {
+            pos = mediaPlayer.getCurrentPosition();
+        } catch (Exception e) {
+            return true;
+        }
+        long now = SystemClock.elapsedRealtime();
+        if (lastProgressPosMs < 0) {
+            lastProgressPosMs = pos;
+            lastProgressAt = now;
+            return false;
+        }
+        if (pos > lastProgressPosMs + 400) {
+            lastProgressPosMs = pos;
+            lastProgressAt = now;
+            return false;
+        }
+        // Near end of track — not a stall
+        try {
+            int dur = mediaPlayer.getDuration();
+            if (dur > 0 && pos >= dur - 1500) return false;
+        } catch (Exception ignored) {}
+        return (now - lastProgressAt) >= STALL_POSITION_MS;
+    }
+
+    private void noteProgressIfAdvancing() {
+        if (!isPrepared || mediaPlayer == null) return;
+        try {
+            int pos = mediaPlayer.getCurrentPosition();
+            if (lastProgressPosMs < 0 || pos > lastProgressPosMs + 400) {
+                lastProgressPosMs = pos;
+                lastProgressAt = SystemClock.elapsedRealtime();
+            }
+        } catch (Exception ignored) {}
+    }
+
     private void runResumeWatchdog() {
         if (userPaused || !wantsToPlay || !isPrepared) {
             cancelResumeWatchdog();
             return;
         }
-        // Never steal focus from a call, Reels, Maps, etc.
         if (!hasAudioFocus) {
-            cancelResumeWatchdog();
+            requestAudioFocus();
+        }
+        // If another app still owns focus after re-request, don't fight a call.
+        if (!hasAudioFocus) {
+            scheduleResumeWatchdog();
             return;
         }
-        if (!isPlayingNow()) {
+        if (!isPlayingNow() || isPlaybackStalled()) {
             lastResumeAt = SystemClock.elapsedRealtime();
-            recoverPlayback();
+            if (isPlaybackStalled()) {
+                reloadAttemptCount = 0;
+                reloadCurrentTrackAt(getPositionMs());
+            } else {
+                recoverPlayback();
+            }
         }
-        if (isPlayingNow()) {
+        if (isPlayingNow() && !isPlaybackStalled()) {
             cancelResumeWatchdog();
             return;
         }
@@ -769,36 +1034,62 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
     }
 
     private void runPlaybackHealthCheck() {
-        if (userPaused || !wantsToPlay || !isPrepared) {
+        if (userPaused || !wantsToPlay) {
             cancelPlaybackHealthCheck();
             return;
         }
         if (!hasAudioFocus) {
-            cancelPlaybackHealthCheck();
+            requestAudioFocus();
+        }
+        // Keep the FGS alive and re-acquire locks while we still want audio.
+        acquireWakeLock();
+        acquireWifiLock();
+        noteProgressIfAdvancing();
+
+        if (!isPrepared && currentUrl != null && !currentUrl.isEmpty()) {
+            reloadAttemptCount = 0;
+            reloadCurrentTrackAt(0);
+            schedulePlaybackHealthCheck();
             return;
         }
-        if (!isPlayingNow()) {
+
+        if (isPlaybackStalled()) {
+            reloadAttemptCount = 0;
+            reloadCurrentTrackAt(getPositionMs());
+        } else if (hasAudioFocus && !isPlayingNow()) {
             recoverPlayback();
+        } else if (!hasAudioFocus) {
+            // Wait for focus; still reschedule so we recover after a call ends overnight.
+            scheduleResumeWatchdog();
+        } else {
+            noteProgressIfAdvancing();
         }
         schedulePlaybackHealthCheck();
     }
 
     private void recoverPlayback() {
         if (userPaused || !wantsToPlay) return;
-        // Do not start audio while another app owns focus (calls, IG/FB/TT video).
-        if (!hasAudioFocus) return;
+        if (!hasAudioFocus) {
+            requestAudioFocus();
+            if (!hasAudioFocus) return;
+        }
+        acquireWakeLock();
+        acquireWifiLock();
         if (mediaPlayer != null && isPrepared) {
             try {
                 if (isPaused || !isPlayingNow()) {
                     mediaPlayer.start();
                     isPaused = false;
                     lastResumeAt = SystemClock.elapsedRealtime();
+                    lastProgressPosMs = -1;
+                    lastProgressAt = SystemClock.elapsedRealtime();
                 }
             } catch (Exception ignored) {}
             if (isPlayingNow()) {
                 cancelResumeWatchdog();
                 updatePlaybackState(true);
                 updateNotification(true);
+                PlaybackWidgetUpdater.updateAll(this);
                 return;
             }
         }
@@ -837,10 +1128,12 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
             isPaused = true;
             updatePlaybackState(false);
             updateNotification(false);
+            PlaybackWidgetUpdater.updateAll(this);
         } else if (mediaPlayer != null && isPrepared) {
             isPaused = true;
             updatePlaybackState(false);
             updateNotification(false);
+            PlaybackWidgetUpdater.updateAll(this);
         }
     }
 
@@ -851,15 +1144,14 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
         cancelResumeWatchdog();
         cancelPlaybackHealthCheck();
         pauseForInterruption();
+        PlaybackWidgetUpdater.updateAll(this);
     }
 
     private void resume() {
-        if (mediaPlayer == null || userPaused) return;
+        if (userPaused) return;
         userPaused = false;
         wantsToPlay = true;
-        if (isPrepared) {
-            recoverPlayback();
-        }
+        ensurePlaying("resume");
     }
 
     private void stopPlayback() {
@@ -872,9 +1164,11 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
         releasePlayer();
         abandonAudioFocus();
         releaseWakeLock();
+        releaseWifiLock();
         if (mediaSession != null) {
             mediaSession.setActive(false);
         }
+        PlaybackWidgetUpdater.updateAll(this);
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
@@ -905,13 +1199,41 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
             }
         }
         if (wakeLock != null && !wakeLock.isHeld()) {
-            wakeLock.acquire();
+            // 4h max — health check re-acquires while wantsToPlay
+            wakeLock.acquire(4 * 60 * 60 * 1000L);
         }
     }
 
     private void releaseWakeLock() {
         if (wakeLock != null && wakeLock.isHeld()) {
             wakeLock.release();
+        }
+    }
+
+    /** Keep Wi‑Fi radio up so Subsonic streams don't die when the screen is off. */
+    private void acquireWifiLock() {
+        if (wifiLock == null) {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null) {
+                int mode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                    ? WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                    : WifiManager.WIFI_MODE_FULL_HIGH_PERF;
+                wifiLock = wm.createWifiLock(mode, "TuneFriend::MusicWifiLock");
+                wifiLock.setReferenceCounted(false);
+            }
+        }
+        if (wifiLock != null && !wifiLock.isHeld()) {
+            try {
+                wifiLock.acquire();
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void releaseWifiLock() {
+        if (wifiLock != null && wifiLock.isHeld()) {
+            try {
+                wifiLock.release();
+            } catch (Exception ignored) {}
         }
     }
 
@@ -953,6 +1275,16 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
         if (nm != null) {
             nm.notify(NOTIFICATION_ID, buildNotification(playing));
         }
+        PlaybackWidgetStore.save(
+            this,
+            currentTitle,
+            currentArtist,
+            currentArtworkUrl,
+            currentTrackId,
+            playing,
+            wantsToPlay && !userPaused
+        );
+        PlaybackWidgetUpdater.updateAll(this);
     }
 
     private PendingIntent actionPendingIntent(String action, int requestCode) {
@@ -1037,17 +1369,36 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
     @Override
     public void onDestroy() {
         if (instance == this) instance = null;
+        unregisterScreenOnReceiver();
         cancelResumeWatchdog();
         cancelPlaybackHealthCheck();
         mainHandler.removeCallbacks(deferredFocusResume);
         releasePlayer();
         abandonAudioFocus();
         releaseWakeLock();
+        releaseWifiLock();
         if (mediaSession != null) {
             mediaSession.release();
             mediaSession = null;
         }
         super.onDestroy();
+    }
+
+    /** Public helpers for home screen widgets. */
+    public static String widgetTitle() {
+        return instance != null ? instance.currentTitle : "";
+    }
+
+    public static String widgetArtist() {
+        return instance != null ? instance.currentArtist : "";
+    }
+
+    public static boolean widgetPlaying() {
+        return instance != null && instance.isPlayingNow();
+    }
+
+    public static boolean widgetWantsPlay() {
+        return instance != null && instance.wantsToPlay && !instance.userPaused;
     }
 
     @Override

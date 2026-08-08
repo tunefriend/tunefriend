@@ -319,6 +319,28 @@
     </div>
   </div>
 
+  <!-- Long-press album → add all tracks to a playlist -->
+  <div id="album-playlist-modal" class="tf-modal" hidden>
+    <div class="tf-modal-backdrop" data-close-album-pl-modal tabindex="-1"></div>
+    <div class="tf-modal-sheet" role="dialog" aria-labelledby="album-pl-modal-title">
+      <header class="tf-modal-header">
+        <h3 id="album-pl-modal-title">Add album to playlist</h3>
+        <button type="button" class="icon-btn" id="btn-close-album-pl-modal" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </header>
+      <p class="settings-hint tf-modal-hint" id="album-pl-modal-hint">Choose a playlist or create one.</p>
+      <div id="album-pl-modal-list" class="tf-modal-body"></div>
+      <div class="playlist-add-panel album-pl-create">
+        <input type="text" id="album-pl-new-name" placeholder="New playlist name" autocomplete="off" maxlength="80" />
+        <button type="button" class="quick-btn primary" id="btn-album-pl-create">Create &amp; add</button>
+      </div>
+      <div class="tf-modal-footer">
+        <button type="button" class="btn secondary settings-btn-block" id="btn-done-album-pl-modal">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <audio id="audio" preload="metadata" playsinline></audio>
   <script src="/capacitor.js"></script>
   <script type="module" src="/js/app.js"></script>

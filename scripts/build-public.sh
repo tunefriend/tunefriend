@@ -7,6 +7,7 @@ rm -rf public
 mkdir -p public/css public/js public/icons
 
 cp index.html manifest.json sw.js public/
+cp privacy.html public/ 2>/dev/null || true
 cp css/app.css public/css/
 cp -r js/* public/js/
 cp icons/* public/icons/ 2>/dev/null || true

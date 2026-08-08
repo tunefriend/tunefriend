@@ -104,6 +104,34 @@ export async function nativeSyncLikedForAuto(tracks) {
   }
 }
 
+/** Push liked/blocked track ids so the Now Playing widget can highlight thumbs. */
+export async function nativeSyncRatingsForWidget(likedIds, blockedIds) {
+  const p = getNativePlugin();
+  if (!p?.syncRatingsForWidget) return;
+  try {
+    await p.syncRatingsForWidget({
+      likedIdsJson: JSON.stringify(likedIds || []),
+      blockedIdsJson: JSON.stringify(blockedIds || []),
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Pending 👍/👎 from the home widget — apply into localStorage favorites. */
+export async function nativeDrainWidgetRatings() {
+  const p = getNativePlugin();
+  if (!p?.drainWidgetRatings) return [];
+  try {
+    const ret = await p.drainWidgetRatings();
+    const raw = ret?.ratingsJson || "[]";
+    const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function nativePlay(song, nextSong = null, options = {}) {
   const p = getNativePlugin();
   if (!p) throw new Error("Native player unavailable — reinstall latest APK");

@@ -342,7 +342,8 @@ export class Player {
   async syncFromNative() {
     if (!this.useNative()) return;
     const now = Date.now();
-    if (now - this._lastSyncAt < 3000) return;
+    // Allow quicker re-sync after wake (was 3s — delayed resume when opening app)
+    if (now - this._lastSyncAt < 800) return;
     this._lastSyncAt = now;
     try {
       const status = await nativeGetStatus();

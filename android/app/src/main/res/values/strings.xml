@@ -4,4 +4,17 @@
     <string name="title_activity_main">TuneFriend</string>
     <string name="package_name">com.tunefriend.app</string>
     <string name="custom_url_scheme">com.tunefriend.app</string>
+    <string name="widget_now_playing_label">Now Playing</string>
+    <string name="widget_now_playing_desc">Track title, artist, and transport controls</string>
+    <string name="widget_mini_label">Mini Player</string>
+    <string name="widget_mini_desc">Compact play/pause and next</string>
+    <string name="widget_quick_label">Shuffle Liked</string>
+    <string name="widget_quick_desc">One-tap shuffle of your liked songs</string>
+    <string name="widget_quick_title">TuneFriend</string>
+    <string name="widget_shuffle_liked">Shuffle Liked</string>
+    <string name="widget_prev">Previous</string>
+    <string name="widget_next">Next</string>
+    <string name="widget_play_pause">Play or pause</string>
+    <string name="widget_thumb_up">Thumbs up</string>
+    <string name="widget_thumb_down">Thumbs down</string>
 </resources>

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_quick_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/widget_quick_title"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/widget_quick_subtitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="Like songs in app first"
+        android:textColor="#B0B0C0"
+        android:textSize="11sp" />
+
+    <TextView
+        android:id="@+id/widget_quick_btn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/widget_btn_bg"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="6dp"
+        android:text="@string/widget_shuffle_liked"
+        android:textColor="#0A0A12"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+</LinearLayout>

@@ -2,7 +2,7 @@
 
 Stream music from a friend's self-hosted Subsonic server (Navidrome, Airsonic, Gonic, etc.) on Android — and on the web.
 
-**Latest release:** [v2.32](https://github.com/tunefriend/tunefriend/releases/latest)
+**Latest release:** [v2.44](https://github.com/tunefriend/tunefriend/releases/latest)
 
 **F-Droid:** [com.tunefriend.app](https://f-droid.org/en/packages/com.tunefriend.app/)
 
@@ -31,7 +31,7 @@ See [DEPLOY.md](DEPLOY.md) for redeploying to Cloudflare (same account as oncall
 
 ## Contact
 
-Questions or feedback: **[tunefriend.music@proton.me](mailto:tunefriend.music@proton.me)**
+Questions or feedback: **[Tuxbased80@gmail.com](mailto:Tuxbased80@gmail.com)**
 
 ## What friends need from you
 
