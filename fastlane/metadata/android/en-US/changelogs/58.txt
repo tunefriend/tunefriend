@@ -1,0 +1,4 @@
+v2.44
+• Home widgets: Now Playing (with thumbs), Mini Player, Shuffle Liked
+• Stronger wake/Doze playback recovery
+• Long-press album → add tracks to a playlist
