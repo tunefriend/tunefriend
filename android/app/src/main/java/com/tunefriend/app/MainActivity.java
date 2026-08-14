@@ -33,6 +33,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BackgroundMusicPlugin.class);
         registerPlugin(SecureStoragePlugin.class);
+        registerPlugin(OfflineStorePlugin.class);
         super.onCreate(savedInstanceState);
 
         // Never draw over the lock screen or turn the display on for media — pocket

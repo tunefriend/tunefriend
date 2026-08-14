@@ -98,6 +98,18 @@
       <div id="playlists-content" class="favorites-panel"></div>
     </section>
 
+    <!-- Offline downloads -->
+    <section id="screen-downloads" class="screen">
+      <header class="top-bar">
+        <button class="icon-btn" id="btn-back-downloads" aria-label="Back">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <h2>Downloads</h2>
+        <div class="top-bar-spacer" aria-hidden="true"></div>
+      </header>
+      <div id="downloads-content" class="favorites-panel"></div>
+    </section>
+
     <!-- Settings -->
     <section id="screen-settings" class="screen">
       <header class="top-bar">
@@ -155,6 +167,20 @@
           </div>
           <button class="btn primary settings-btn-block" id="btn-sync-library">Sync Library</button>
           <p class="settings-hint">Downloads and saves your full library on this device (fast search3 sync). Sync once — then Songs, Albums, and Genres open instantly.</p>
+        </div>
+
+        <div class="settings-group">
+          <h3>Offline music</h3>
+          <div class="settings-row">
+            <span class="settings-label">Downloaded tracks</span>
+            <span class="settings-value" id="settings-offline-count">0</span>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Storage used</span>
+            <span class="settings-value" id="settings-offline-size">0 B</span>
+          </div>
+          <button class="btn primary settings-btn-block" id="btn-open-downloads">Manage downloads</button>
+          <p class="settings-hint">Tap ⬇ on any song, or <strong>Download album</strong> on an album page. Plays without Wi‑Fi (plane mode).</p>
           <p class="settings-hint"><strong>Overnight play:</strong> allow Notifications when asked, and set Battery → Unrestricted. Without those, Android/GrapheneOS will pause music after the screen is off for a while — opening the app then “magically” resumes it.</p>
           <p class="settings-hint"><strong>Android Auto:</strong> Sideloaded APKs (not from Play Store) often do not appear until you enable <em>Unknown sources</em> in Android Auto developer settings. Open the Android Auto app on the phone → About → tap Version 10× → enable Unknown sources. Then open TuneFriend once, thumbs-up some songs or start playback, and reconnect the car.</p>
         </div>

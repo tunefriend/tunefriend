@@ -1,0 +1,3 @@
+v2.45
+• Target Android 16 (API 36) for Google Play requirements
+• Includes v2.44: home widgets, wake/playback fixes, album→playlist

@@ -74,6 +74,22 @@ import {
   removeTrackFromPlaylist,
   onPlaylistsChange,
 } from "./playlists.js";
+import {
+  isOffline,
+  isDownloading,
+  downloadSong,
+  downloadSongs,
+  removeOffline,
+  clearAllOffline,
+  listOffline,
+  offlineCount,
+  offlineTotalBytes,
+  formatBytes,
+  getCachedOfflinePath,
+  onOfflineChange,
+  reconcileOfflineIndex,
+  downloadIconSvg,
+} from "./offline.js";
 
 let api = null;
 let currentTab = "home";
@@ -214,17 +230,171 @@ const playerUI = bindPlayerUI(player, () => api, { ...els, content: els.content 
 function songsWithUrls(songs) {
   const transcode = !isNativeApp();
   // Never queue thumbs-down (blocked) songs on this device
-  return filterPlayableSongs(songs).map((s) => ({
-    ...s,
-    streamUrl: api.streamUrl(s.id, { transcode }),
-    coverArtUrl: s.coverArt ? api.coverArtUrl(s.coverArt, 512) : "",
-  }));
+  return filterPlayableSongs(songs).map((s) => {
+    const offlinePath = getCachedOfflinePath(s.id);
+    return {
+      ...s,
+      streamUrl: offlinePath || api.streamUrl(s.id, { transcode }),
+      coverArtUrl: s.coverArt ? api.coverArtUrl(s.coverArt, 512) : "",
+      offline: !!offlinePath,
+    };
+  });
+}
+
+function songDownloadUrls(song) {
+  if (!api || !song?.id) return { primary: "", fallback: "" };
+  return {
+    primary: api.downloadUrl(song.id),
+    fallback: api.streamUrl(song.id, { transcode: false }),
+  };
 }
 
 function showBottomDock(show) {
   const dock = document.getElementById("bottom-dock");
   dock?.classList.toggle("hidden", !show);
   playerUI.updateDockHeight?.();
+}
+
+async function handleSongOfflineToggle(song, container) {
+  if (!api || !song?.id) return;
+  if (isDownloading(song.id)) {
+    showToast("Still downloading…");
+    return;
+  }
+  if (isOffline(song.id)) {
+    await removeOffline(song.id);
+    showToast("Removed offline copy");
+    refreshOfflineButtons(container);
+    return;
+  }
+  try {
+    showToast("Downloading…");
+    const urls = songDownloadUrls(song);
+    await downloadSong(song, urls.primary, urls.fallback);
+    showToast("Saved for offline");
+  } catch (e) {
+    showToast(e?.message || "Download failed");
+  }
+  refreshOfflineButtons(container);
+}
+
+function refreshOfflineButtons(container) {
+  container?.querySelectorAll("[data-offline-song]").forEach((btn) => {
+    const id = btn.dataset.offlineSong;
+    const st = offlineBtnState(id);
+    btn.classList.toggle("offline-yes", st === "yes");
+    btn.classList.toggle("offline-busy", st === "busy");
+    btn.innerHTML = downloadIconSvg(st);
+    const label = st === "yes" ? "Remove download" : st === "busy" ? "Downloading" : "Download for offline";
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+  });
+  container?.querySelectorAll(".song-item[data-song-id]").forEach((li) => {
+    const id = li.dataset.songId;
+    const title = li.querySelector(".song-title");
+    if (!title) return;
+    const hasBadge = title.querySelector(".offline-badge");
+    if (isOffline(id) && !hasBadge) {
+      title.insertAdjacentHTML("beforeend", ' <span class="offline-badge" title="Downloaded">⬇</span>');
+    } else if (!isOffline(id) && hasBadge) {
+      hasBadge.remove();
+    }
+  });
+  updateOfflineSettingsUI();
+}
+
+async function handleAlbumDownload(songs, albumName) {
+  if (!api || !songs?.length) {
+    showToast("No tracks to download");
+    return;
+  }
+  const need = songs.filter((s) => s?.id && !isOffline(s.id));
+  if (!need.length) {
+    showToast("Album already downloaded");
+    return;
+  }
+  showToast(`Downloading ${need.length} tracks…`);
+  const result = await downloadSongs(need, (s) => songDownloadUrls(s), {
+    onProgress: (done, total) => {
+      if (done === total || done % 5 === 0) {
+        showToast(`Downloading ${done}/${total}…`);
+      }
+    },
+  });
+  const label = albumName ? `“${albumName}”` : "Album";
+  if (result.failed && !result.added) {
+    showToast(`Could not download ${label}`);
+  } else {
+    showToast(
+      `${label}: ${result.added} saved` +
+        (result.skipped ? `, ${result.skipped} already offline` : "") +
+        (result.failed ? `, ${result.failed} failed` : "")
+    );
+  }
+  refreshOfflineButtons(els.content);
+  if (document.getElementById("screen-downloads")?.classList.contains("active")) {
+    renderDownloadsScreen();
+  }
+}
+
+function updateOfflineSettingsUI() {
+  const countEl = document.getElementById("settings-offline-count");
+  const sizeEl = document.getElementById("settings-offline-size");
+  if (countEl) countEl.textContent = String(offlineCount());
+  if (sizeEl) sizeEl.textContent = formatBytes(offlineTotalBytes());
+}
+
+function renderDownloadsScreen() {
+  const panel = document.getElementById("downloads-content");
+  if (!panel) return;
+  const list = listOffline();
+  const total = formatBytes(offlineTotalBytes());
+  let html = `
+    <p class="library-hint">Songs saved on this phone for planes / no signal. ${list.length} track${list.length === 1 ? "" : "s"} · ${total}.</p>
+    <div class="album-actions">
+      <button type="button" class="quick-btn secondary" id="btn-clear-all-offline" ${list.length ? "" : "disabled"}>Clear all downloads</button>
+    </div>
+  `;
+  if (!list.length) {
+    html += '<div class="empty-state">No offline music yet — tap ⬇ on a song or Download album on an album page.</div>';
+  } else {
+    html += `<ul class="song-list">`;
+    list.forEach((t, i) => {
+      html += `
+        <li class="song-item" data-offline-row="${t.id}">
+          <span class="song-num">${i + 1}</span>
+          <div class="song-info">
+            <div class="song-title">${escapeHtml(t.title)} <span class="offline-badge">⬇</span></div>
+            <div class="song-sub">${escapeHtml(t.artist || "")}${t.album ? ` · ${escapeHtml(t.album)}` : ""} · ${formatBytes(t.size)}</div>
+          </div>
+          <button type="button" class="offline-btn offline-yes" data-remove-offline="${t.id}" aria-label="Remove download">${downloadIconSvg("yes")}</button>
+          <span class="song-dur">${formatDuration(t.duration)}</span>
+        </li>`;
+    });
+    html += `</ul>`;
+  }
+  panel.innerHTML = html;
+  panel.querySelector("#btn-clear-all-offline")?.addEventListener("click", async () => {
+    if (!list.length) return;
+    if (!confirm(`Delete all ${list.length} offline tracks from this phone?`)) return;
+    await clearAllOffline();
+    showToast("All offline music removed");
+    renderDownloadsScreen();
+    updateOfflineSettingsUI();
+  });
+  panel.querySelectorAll("[data-remove-offline]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await removeOffline(btn.dataset.removeOffline);
+      showToast("Removed offline copy");
+      renderDownloadsScreen();
+      updateOfflineSettingsUI();
+    });
+  });
+}
+
+function openDownloads() {
+  showScreen("screen-downloads");
+  renderDownloadsScreen();
 }
 
 function dismissToast() {
@@ -298,15 +468,28 @@ function renderAlbumGridSlice(albums, start, count) {
   return html;
 }
 
+function offlineBtnState(songId) {
+  if (isDownloading(songId)) return "busy";
+  if (isOffline(songId)) return "yes";
+  return "no";
+}
+
+function offlineBtnHtml(songId) {
+  const st = offlineBtnState(songId);
+  const label = st === "yes" ? "Remove download" : st === "busy" ? "Downloading" : "Download for offline";
+  return `<button type="button" class="offline-btn${st === "yes" ? " offline-yes" : ""}${st === "busy" ? " offline-busy" : ""}" data-offline-song="${songId}" aria-label="${label}" title="${label}">${downloadIconSvg(st)}</button>`;
+}
+
 function renderSongItem(s, i, showAlbum = false) {
   const currentId = player.current?.id;
   return `
     <li class="song-item${s.id === currentId ? " playing" : ""}" data-song-idx="${i}" data-song-id="${s.id}">
       <span class="song-num">${s.track || i + 1}</span>
       <div class="song-info">
-        <div class="song-title">${escapeHtml(s.title)}</div>
+        <div class="song-title">${escapeHtml(s.title)}${isOffline(s.id) ? ' <span class="offline-badge" title="Downloaded">⬇</span>' : ""}</div>
         <div class="song-sub">${escapeHtml(showAlbum ? s.album : s.artist)}</div>
       </div>
+      ${offlineBtnHtml(s.id)}
       ${songRateButtonsHtml(s.id)}
       <span class="song-dur">${formatDuration(s.duration)}</span>
     </li>
@@ -381,6 +564,18 @@ function setupContentDelegation(container) {
         e.stopPropagation();
         return;
       }
+    }
+    const offlineBtn = e.target.closest("[data-offline-song]");
+    if (offlineBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const song = findListSong(container, offlineBtn.dataset.offlineSong);
+      if (!song) {
+        showToast("Song not found");
+        return;
+      }
+      handleSongOfflineToggle(song, container);
+      return;
     }
     const upBtn = e.target.closest("[data-rate-up]");
     if (upBtn) {
@@ -736,6 +931,7 @@ const backNav = createBackNav({
     showScreen("screen-main");
     if (tab && tab !== "settings") switchTab(tab, { fromBack: true });
   },
+  onBackFromDownloads: () => showScreen("screen-settings"),
   onBackFromMainDrillDown: () => popMainContent(),
   onBackToHome: () => switchTab("home", { fromBack: true }),
 });
@@ -773,12 +969,19 @@ async function openAlbum(id, { fromScreen, skipPush = false } = {}) {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
           Shuffle
         </button>
+        <button class="quick-btn secondary" id="btn-download-album">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+          Download album
+        </button>
       </div>
       ${renderSongList(album.songs)}
     `;
     attachSongClicks(els.content, album.songs);
     attachPlayButtons(els.content, album.songs);
     attachFavoriteHandlers(els.content, album.songs, [album]);
+    els.content.querySelector("#btn-download-album")?.addEventListener("click", () => {
+      handleAlbumDownload(album.songs, album.name);
+    });
   } catch (e) {
     showError(e.message);
   }
@@ -910,8 +1113,91 @@ async function openArtist(id, name, { skipPush = false } = {}) {
   }
 }
 
+function renderOfflineHome() {
+  const list = listOffline();
+  els.pageTitle.textContent = "Home";
+  let html = `
+    <div class="quick-actions">
+      <button class="quick-btn primary" id="btn-shuffle-offline" ${list.length ? "" : "disabled"}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+        Shuffle downloads
+      </button>
+      <button class="quick-btn secondary" id="btn-open-downloads-home">
+        Manage downloads
+      </button>
+    </div>
+    <p class="library-hint">You’re offline. ${list.length
+      ? `${list.length} track${list.length === 1 ? "" : "s"} on this phone (${formatBytes(offlineTotalBytes())}).`
+      : "No offline music yet — connect once and tap ⬇ on songs or Download album."}</p>
+  `;
+  if (list.length) {
+    html += `<div class="section-title">On this device</div><ul class="song-list">`;
+    list.slice(0, 40).forEach((t, i) => {
+      html += `
+        <li class="song-item" data-offline-play="${t.id}">
+          <span class="song-num">${i + 1}</span>
+          <div class="song-info">
+            <div class="song-title">${escapeHtml(t.title)} <span class="offline-badge">⬇</span></div>
+            <div class="song-sub">${escapeHtml(t.artist || "")}</div>
+          </div>
+          <span class="song-dur">${formatDuration(t.duration)}</span>
+        </li>`;
+    });
+    html += `</ul>`;
+    if (list.length > 40) {
+      html += `<p class="library-hint">+ ${list.length - 40} more in Downloads</p>`;
+    }
+  }
+  els.content.innerHTML = html;
+  els.content.querySelector("#btn-open-downloads-home")?.addEventListener("click", openDownloads);
+  els.content.querySelector("#btn-shuffle-offline")?.addEventListener("click", () => {
+    playOfflineList(true);
+  });
+  els.content.querySelectorAll("[data-offline-play]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const id = el.dataset.offlinePlay;
+      const idx = list.findIndex((t) => String(t.id) === String(id));
+      playOfflineList(false, idx >= 0 ? idx : 0);
+    });
+  });
+}
+
+function playOfflineList(shuffle, startIndex = 0) {
+  const list = listOffline();
+  if (!list.length) {
+    showToast("No offline tracks");
+    return;
+  }
+  const songs = list.map((t) => {
+    const path = getCachedOfflinePath(t.id);
+    return {
+      id: t.id,
+      title: t.title,
+      artist: t.artist,
+      album: t.album,
+      albumId: t.albumId,
+      coverArt: t.coverArt,
+      duration: t.duration,
+      streamUrl: path || "",
+      coverArtUrl: t.coverArt && api ? api.coverArtUrl(t.coverArt, 512) : "",
+      offline: true,
+    };
+  }).filter((s) => s.streamUrl);
+  if (!songs.length) {
+    showToast("Offline files missing — reconnect and re-download");
+    return;
+  }
+  if (shuffle) player.playShuffled(songs);
+  else player.play(songs, startIndex);
+  highlightPlaying();
+}
+
 async function renderHome() {
   els.pageTitle.textContent = "Home";
+  if (window.__tuneFriendOfflineOnly) {
+    renderOfflineHome();
+    return;
+  }
   showLoading();
   try {
     const [newest, random] = await Promise.all([
@@ -939,6 +1225,13 @@ async function renderHome() {
     els.content.querySelector("#btn-shuffle-all")?.addEventListener("click", shuffleAll);
     els.content.querySelector("#btn-search")?.addEventListener("click", openSearch);
   } catch (e) {
+    // Fall into offline home if network died mid-session
+    if (isNetworkError(e) || offlineCount() > 0) {
+      window.__tuneFriendOfflineOnly = true;
+      setOfflineModeBanner(true);
+      renderOfflineHome();
+      return;
+    }
     showError(e.message);
   }
 }
@@ -2086,6 +2379,7 @@ function openSettings() {
   document.getElementById("edit-connection-panel").hidden = true;
   document.getElementById("edit-connection-error").hidden = true;
   updateLibrarySettingsUI();
+  updateOfflineSettingsUI();
   updateBlockedCountBadge();
 
   showScreen("screen-settings");
@@ -2357,6 +2651,8 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
 });
 
 document.getElementById("btn-settings")?.addEventListener("click", openSettings);
+document.getElementById("btn-open-downloads")?.addEventListener("click", openDownloads);
+document.getElementById("btn-back-downloads")?.addEventListener("click", () => showScreen("screen-settings"));
 
 const DONATE_URL = "https://liberapay.com/west66/donate";
 const FEEDBACK_EMAIL = "Tuxbased80@gmail.com";
@@ -2428,11 +2724,11 @@ function looksLikeRawIpUrl(urlStr) {
 
 function friendlyLoginError(err, { useProxy, serverUrl } = {}) {
   const msg = String(err?.message || err || "");
-  if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+  if (/failed to fetch|networkerror|load failed|network request failed|timeout/i.test(msg)) {
     if (location.protocol === "https:" && /^http:/i.test(serverUrl || "")) {
       return "This site is HTTPS but your server is HTTP. Turn ON “Use built-in proxy”, or use an https:// server URL.";
     }
-    if (!useProxy) {
+    if (!useProxy && !isNativeApp()) {
       return "Connection blocked (CORS/network). Turn ON “Use built-in proxy” and try again.";
     }
     if (looksLikeRawIpUrl(serverUrl)) {
@@ -2444,6 +2740,107 @@ function friendlyLoginError(err, { useProxy, serverUrl } = {}) {
     return "Cloudflare cannot use a raw IP. Use a hostname (e.g. http://music.tunefriend.org:4533) with proxy ON.";
   }
   return msg || "Could not connect. Check URL and credentials.";
+}
+
+function isNetworkError(err) {
+  const msg = String(err?.message || err || "");
+  return /failed to fetch|networkerror|load failed|network request failed|timeout|unreachable|ECONNREFUSED|ENETUNREACH|Unable to resolve|UnknownHost/i.test(msg);
+}
+
+/** Banner at top of main content when using offline-only mode. */
+function setOfflineModeBanner(show) {
+  let el = document.getElementById("offline-mode-banner");
+  if (!show) {
+    el?.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "offline-mode-banner";
+    el.className = "offline-mode-banner";
+    el.innerHTML = `
+      <span>Offline mode — playing downloads only. Connect to sync library &amp; stream.</span>
+      <button type="button" class="quick-btn secondary" id="btn-retry-online">Retry connection</button>
+      <button type="button" class="quick-btn secondary" id="btn-offline-downloads">Downloads</button>
+    `;
+    const main = document.getElementById("content")?.parentElement || document.getElementById("screen-main");
+    const content = document.getElementById("content");
+    if (content?.parentElement) {
+      content.parentElement.insertBefore(el, content);
+    } else {
+      main?.prepend(el);
+    }
+    el.querySelector("#btn-retry-online")?.addEventListener("click", () => retryOnlineConnection());
+    el.querySelector("#btn-offline-downloads")?.addEventListener("click", openDownloads);
+  }
+}
+
+async function enterAppOnline() {
+  window.__tuneFriendOfflineOnly = false;
+  setOfflineModeBanner(false);
+  player.resolveSong = enrichSong;
+  setupMediaSession(player, () => api);
+  showScreen("screen-main");
+  showBottomDock(true);
+  try {
+    await initLibraryCache();
+  } catch {
+    /* library optional if already cached */
+  }
+  await restorePlayback();
+  syncLikedToAndroidAuto();
+  switchTab("home");
+}
+
+/**
+ * No network — still open the app with saved credentials so offline downloads play.
+ * Does NOT clear login (that was the bug: ping fail wiped config).
+ */
+async function enterAppOffline(config, { toast = true } = {}) {
+  window.__tuneFriendOfflineOnly = true;
+  api = new SubsonicAPI(config);
+  player.resolveSong = enrichSong;
+  setupMediaSession(player, () => api);
+  showScreen("screen-main");
+  showBottomDock(true);
+  setOfflineModeBanner(true);
+  try {
+    await initLibraryCache();
+  } catch {
+    /* ok */
+  }
+  await restorePlayback();
+  // Prefer Downloads if we have offline tracks and nothing is playing
+  if (offlineCount() > 0 && !player.current) {
+    // Stay on home but toast; user can open Downloads
+  }
+  switchTab("home");
+  if (toast) {
+    const n = offlineCount();
+    showToast(
+      n
+        ? `Offline · ${n} downloaded track${n === 1 ? "" : "s"} ready`
+        : "Offline · no downloads yet — connect once to save music"
+    );
+  }
+}
+
+async function retryOnlineConnection() {
+  const config = loadConfig();
+  if (!config?.serverUrl || !config?.password) {
+    showScreen("screen-login");
+    return;
+  }
+  showToast("Connecting…");
+  try {
+    api = new SubsonicAPI(config);
+    await api.ping();
+    await enterAppOnline();
+    showToast("Back online");
+  } catch (e) {
+    showToast(isNetworkError(e) ? "Still offline" : (e.message || "Could not connect"));
+    setOfflineModeBanner(true);
+  }
 }
 
 els.loginForm.addEventListener("submit", async (e) => {
@@ -2460,7 +2857,7 @@ els.loginForm.addEventListener("submit", async (e) => {
     serverUrl: document.getElementById("server-url").value.trim(),
     username: document.getElementById("username").value,
     password: document.getElementById("password").value,
-    useProxy: document.getElementById("use-proxy").checked,
+    useProxy: isNativeApp() ? false : document.getElementById("use-proxy").checked,
   };
 
   try {
@@ -2473,17 +2870,40 @@ els.loginForm.addEventListener("submit", async (e) => {
     await testApi.ping();
     api = testApi;
     await saveConfig(config);
-    player.resolveSong = enrichSong;
-    setupMediaSession(player, () => api);
-    showScreen("screen-main");
-    showBottomDock(true);
-    await initLibraryCache();
-    await restorePlayback();
-    syncLikedToAndroidAuto();
-    switchTab("home");
+    await enterAppOnline();
   } catch (err) {
-    els.loginError.textContent = friendlyLoginError(err, config);
-    els.loginError.hidden = false;
+    // Saved session + network down → enter offline (never wipe credentials)
+    const saved = loadConfig();
+    const sameUser =
+      saved?.serverUrl &&
+      saved?.password &&
+      String(saved.username || "") === String(config.username || "") &&
+      (offlineCount() > 0 || saved.password === config.password);
+
+    if (isNetworkError(err) && sameUser && config.password) {
+      try {
+        await saveConfig(config);
+      } catch {
+        /* keep prior secure store */
+      }
+      els.loginError.hidden = true;
+      await enterAppOffline(config);
+    } else if (isNetworkError(err) && offlineCount() > 0 && config.password) {
+      // First offline open after downloads: save and continue
+      try {
+        await saveConfig(config);
+      } catch {
+        /* ignore */
+      }
+      els.loginError.hidden = true;
+      await enterAppOffline(config);
+    } else {
+      els.loginError.textContent = friendlyLoginError(err, config);
+      if (isNetworkError(err) && offlineCount() > 0) {
+        els.loginError.textContent += " You have offline music — use the same account and Connect again, or wait for signal.";
+      }
+      els.loginError.hidden = false;
+    }
   } finally {
     els.loginBtn.disabled = false;
     els.loginBtn.textContent = "Connect";
@@ -2688,10 +3108,12 @@ function setupNativeUI() {
 
 function enrichSong(song, { transcode = false } = {}) {
   const useTranscode = transcode || !isNativeApp();
+  const offlinePath = getCachedOfflinePath(song.id);
   return {
     ...song,
-    streamUrl: api.streamUrl(song.id, { transcode: useTranscode }),
+    streamUrl: offlinePath || api.streamUrl(song.id, { transcode: useTranscode }),
     coverArtUrl: song.coverArt ? api.coverArtUrl(song.coverArt, 512) : "",
+    offline: !!offlinePath,
   };
 }
 
@@ -2713,6 +3135,19 @@ async function init() {
   player.shuffle = loadSettings().shuffleDefault;
   // Load + migrate credentials (password no longer plain localStorage)
   await initConfigStore();
+  try {
+    await reconcileOfflineIndex();
+  } catch {
+    /* offline index is best-effort */
+  }
+  updateOfflineSettingsUI();
+  onOfflineChange(() => {
+    updateOfflineSettingsUI();
+    refreshOfflineButtons(els.content);
+    if (document.getElementById("screen-downloads")?.classList.contains("active")) {
+      renderDownloadsScreen();
+    }
+  });
   const config = loadConfig();
   if (config?.serverUrl && config?.password) {
     document.getElementById("server-url").value = config.serverUrl || "";
@@ -2722,20 +3157,31 @@ async function init() {
     try {
       api = new SubsonicAPI(config);
       await api.ping();
-      player.resolveSong = enrichSong;
-      setupMediaSession(player, () => api);
-      showScreen("screen-main");
-      showBottomDock(true);
-      await initLibraryCache();
-      await restorePlayback();
-      syncLikedToAndroidAuto();
-      switchTab("home");
+      await enterAppOnline();
       return;
-    } catch {
-      await clearConfig();
+    } catch (err) {
+      // NEVER clearConfig() here — that forced re-login whenever offline.
+      // Wrong password still keeps credentials so user can fix when online.
+      if (isNetworkError(err) || offlineCount() > 0) {
+        await enterAppOffline(config);
+        return;
+      }
+      // Auth error while online: show login with message, keep credentials filled
+      els.loginError.textContent = friendlyLoginError(err, config);
+      els.loginError.hidden = false;
     }
   }
   showScreen("screen-login");
+  // Offer offline continue if downloads exist but form empty somehow
+  if (offlineCount() > 0 && config?.password) {
+    const hint = document.createElement("p");
+    hint.className = "hint";
+    hint.id = "login-offline-hint";
+    hint.innerHTML = `You have <strong>${offlineCount()}</strong> offline tracks. Tap <strong>Connect</strong> — if the server is unreachable we’ll open offline mode.`;
+    if (!document.getElementById("login-offline-hint")) {
+      els.loginForm?.after(hint);
+    }
+  }
 }
 
 let syncNativeTimer = null;

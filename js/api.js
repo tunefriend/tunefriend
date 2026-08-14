@@ -603,6 +603,21 @@ export class SubsonicAPI {
     }
     return `${this.serverUrl}/rest/stream.view?${params}`;
   }
+
+  /**
+   * Best URL for offline download — prefer original (download.view), fall back to stream.
+   * download.view returns the raw file when the server allows it.
+   */
+  downloadUrl(songId) {
+    const params = this._authParams();
+    params.set("id", songId);
+    if (this.useProxy) {
+      // Proxy may not forward binary download well; use stream through proxy on web.
+      return `/api/proxy?server=${encodeURIComponent(this.serverUrl)}&endpoint=stream.view&${params}&maxBitRate=${loadSettings().bitrate || 320}`;
+    }
+    // Native: original file when available
+    return `${this.serverUrl}/rest/download.view?${params}`;
+  }
 }
 
 function mapAlbum(al) {

@@ -17,6 +17,7 @@ export function createBackNav({
   onBackFromFavorites,
   onBackFromPlaylists,
   onBackFromSettings,
+  onBackFromDownloads,
   onBackFromMainDrillDown,
   onBackToHome,
 }) {
@@ -73,6 +74,10 @@ export function createBackNav({
     }
     if (screen === "screen-settings") {
       onBackFromSettings?.(lastMainTab);
+      return true;
+    }
+    if (screen === "screen-downloads") {
+      onBackFromDownloads?.();
       return true;
     }
     if (screen === "screen-main" && navDepth !== "root") {

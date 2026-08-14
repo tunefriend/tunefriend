@@ -1,0 +1,4 @@
+v2.46
+• Offline downloads: save songs or full albums to the phone
+• Play downloaded music with no Wi‑Fi (plane mode)
+• Settings → Manage downloads

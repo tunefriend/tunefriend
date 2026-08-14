@@ -405,6 +405,75 @@ a.btn {
   gap: 1rem;
 }
 
+/* Offline download controls */
+.offline-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted, #888);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.offline-btn:active {
+  opacity: 0.7;
+}
+
+.offline-btn.offline-yes {
+  color: #5bdc8a;
+}
+
+.offline-btn.offline-busy {
+  color: #7c9cff;
+}
+
+.offline-badge {
+  font-size: 0.75em;
+  opacity: 0.85;
+  margin-left: 0.15rem;
+}
+
+@keyframes tf-spin {
+  to { transform: rotate(360deg); }
+}
+
+.offline-btn .spin,
+svg.spin {
+  animation: tf-spin 0.9s linear infinite;
+}
+
+.offline-mode-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0.5rem 1rem 0;
+  padding: 0.65rem 0.85rem;
+  border-radius: 12px;
+  background: #1a2030;
+  border: 1px solid #3a4560;
+  color: #c8d4f0;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+.offline-mode-banner span {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.offline-mode-banner .quick-btn {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+}
+
 .album-pl-create {
   display: flex;
   flex-direction: column;
