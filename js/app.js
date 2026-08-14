@@ -106,7 +106,13 @@ function isTabStale(gen, tab) {
 
 const LIST_CHUNK = 100;
 const ALBUM_CHUNK = 60;
-const TAB_TITLES = { home: "Home", songs: "Songs", albums: "Albums", genres: "Genres" };
+const TAB_TITLES = {
+  home: "Home",
+  songs: "Songs",
+  albums: "Albums",
+  genres: "Genres",
+  downloads: "Downloads",
+};
 
 const GENRE_PRESETS = [
   { id: "rock", label: "Rock", patterns: ["rock"], exclude: ["alt", "alternative", "punk"] },
@@ -344,15 +350,18 @@ function updateOfflineSettingsUI() {
   if (sizeEl) sizeEl.textContent = formatBytes(offlineTotalBytes());
 }
 
-function renderDownloadsScreen() {
-  const panel = document.getElementById("downloads-content");
+function renderDownloadsInto(panel) {
   if (!panel) return;
   const list = listOffline();
   const total = formatBytes(offlineTotalBytes());
   let html = `
     <p class="library-hint">Songs saved on this phone for planes / no signal. ${list.length} track${list.length === 1 ? "" : "s"} · ${total}.</p>
     <div class="album-actions">
-      <button type="button" class="quick-btn secondary" id="btn-clear-all-offline" ${list.length ? "" : "disabled"}>Clear all downloads</button>
+      <button type="button" class="quick-btn primary" id="btn-shuffle-offline-tab" ${list.length ? "" : "disabled"}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+        Shuffle downloads
+      </button>
+      <button type="button" class="quick-btn secondary" id="btn-clear-all-offline" ${list.length ? "" : "disabled"}>Clear all</button>
     </div>
   `;
   if (!list.length) {
@@ -361,7 +370,7 @@ function renderDownloadsScreen() {
     html += `<ul class="song-list">`;
     list.forEach((t, i) => {
       html += `
-        <li class="song-item" data-offline-row="${t.id}">
+        <li class="song-item" data-offline-play="${t.id}">
           <span class="song-num">${i + 1}</span>
           <div class="song-info">
             <div class="song-title">${escapeHtml(t.title)} <span class="offline-badge">⬇</span></div>
@@ -374,6 +383,7 @@ function renderDownloadsScreen() {
     html += `</ul>`;
   }
   panel.innerHTML = html;
+  panel.querySelector("#btn-shuffle-offline-tab")?.addEventListener("click", () => playOfflineList(true));
   panel.querySelector("#btn-clear-all-offline")?.addEventListener("click", async () => {
     if (!list.length) return;
     if (!confirm(`Delete all ${list.length} offline tracks from this phone?`)) return;
@@ -383,18 +393,44 @@ function renderDownloadsScreen() {
     updateOfflineSettingsUI();
   });
   panel.querySelectorAll("[data-remove-offline]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
       await removeOffline(btn.dataset.removeOffline);
       showToast("Removed offline copy");
       renderDownloadsScreen();
       updateOfflineSettingsUI();
     });
   });
+  panel.querySelectorAll("[data-offline-play]").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      if (e.target.closest("[data-remove-offline]")) return;
+      const id = el.dataset.offlinePlay;
+      const idx = list.findIndex((t) => String(t.id) === String(id));
+      playOfflineList(false, idx >= 0 ? idx : 0);
+    });
+  });
+}
+
+function renderDownloadsScreen() {
+  // Bottom-nav tab (main content) and Settings “Manage downloads” screen
+  if (currentTab === "downloads" && document.getElementById("screen-main")?.classList.contains("active")) {
+    els.pageTitle.textContent = "Downloads";
+    renderDownloadsInto(els.content);
+  }
+  const panel = document.getElementById("downloads-content");
+  if (panel && document.getElementById("screen-downloads")?.classList.contains("active")) {
+    renderDownloadsInto(panel);
+  }
+}
+
+function renderDownloadsTab() {
+  els.pageTitle.textContent = "Downloads";
+  renderDownloadsInto(els.content);
 }
 
 function openDownloads() {
-  showScreen("screen-downloads");
-  renderDownloadsScreen();
+  // Prefer bottom nav tab so dock stays visible
+  switchTab("downloads");
 }
 
 function dismissToast() {
@@ -931,7 +967,11 @@ const backNav = createBackNav({
     showScreen("screen-main");
     if (tab && tab !== "settings") switchTab(tab, { fromBack: true });
   },
-  onBackFromDownloads: () => showScreen("screen-settings"),
+  onBackFromDownloads: () => {
+    // Legacy full-screen downloads; bottom nav tab uses main
+    if (currentTab === "downloads") switchTab("home", { fromBack: true });
+    else showScreen("screen-settings");
+  },
   onBackFromMainDrillDown: () => popMainContent(),
   onBackToHome: () => switchTab("home", { fromBack: true }),
 });
@@ -1817,6 +1857,7 @@ const tabRenderers = {
   songs: renderSongs,
   albums: renderAlbums,
   genres: renderGenres,
+  downloads: renderDownloadsTab,
 };
 
 async function shuffleAll() {
@@ -3144,7 +3185,7 @@ async function init() {
   onOfflineChange(() => {
     updateOfflineSettingsUI();
     refreshOfflineButtons(els.content);
-    if (document.getElementById("screen-downloads")?.classList.contains("active")) {
+    if (currentTab === "downloads" || document.getElementById("screen-downloads")?.classList.contains("active")) {
       renderDownloadsScreen();
     }
   });
