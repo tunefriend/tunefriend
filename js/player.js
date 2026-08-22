@@ -87,8 +87,13 @@ export class Player {
     if (!getNativePlugin()) return;
     this._nativeListenersSet = true;
     onNativeEnded(() => {
+      // Native could not advance its own queue — keep going from the JS queue
+      // with a fresh stream URL (manual Next already worked this way).
       this._nativePlaying = false;
-      if (this._advanceIndex()) {
+      this._pendingNextIndex = -1;
+      const nextIdx = this._computeNextIndex();
+      if (nextIdx >= 0) {
+        this.index = nextIdx;
         this._loadCurrent();
         return;
       }
@@ -113,11 +118,15 @@ export class Player {
         this._restorePosition = 0;
         this.onPlaybackOk?.();
         this.onStateChange?.();
+        // Still arm the following track for when they hit play
+        this._prepareNativeNext();
         return;
       }
       this._nativePlaying = true;
       this.onPlaybackOk?.();
       this.onStateChange?.();
+      // Ensure next track URL is always primed after each prepare
+      this._prepareNativeNext();
     });
     onNativeSkipNext(() => this.next());
     onNativeSkipPrevious(() => this.prev());
@@ -306,9 +315,13 @@ export class Player {
       const nextSong = this._pendingNextIndex >= 0
         ? this._freshSong(this.queue[this._pendingNextIndex])
         : null;
-      const current = this._freshSong(this.current);
-      if (nextSong) await nativeSetNextTrack(nextSong, this._nativeQueueOptions());
-      else await nativeSetNextTrack(current, this._nativeQueueOptions());
+      if (nextSong) {
+        await nativeSetNextTrack(nextSong, this._nativeQueueOptions());
+      } else {
+        // Do NOT set next=current — that can confuse end-of-queue into a stall.
+        this._pendingNextIndex = -1;
+        await nativeClearNextTrack();
+      }
     } catch {
       // Native queue still advances in the background service.
     } finally {
@@ -513,8 +526,10 @@ export class Player {
   }
 
   async play(songs, index = 0, { shuffle = false } = {}) {
-    this.shuffle = shuffle;
-    await this.playQueue(songs, index);
+    // Sequential queue advance is always on; shuffle only picks order / next index.
+    this.shuffle = !!shuffle;
+    if (!songs?.length) return;
+    await this.playQueue(songs, Math.max(0, Math.min(index, songs.length - 1)));
     if (!this.useNative()) {
       try {
         await this.audio.play();
