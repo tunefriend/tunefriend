@@ -1864,9 +1864,10 @@ async function shuffleAll() {
   try {
     showToast("Building a diverse shuffle…");
     const cache = loadLibraryCache();
+    // Exclude thumbs-down songs and blocked artists (GitHub #6)
     let songs = [];
     if (cache?.songs?.length) {
-      songs = sampleDiverseSongs(cache.songs, 900);
+      songs = sampleDiverseSongs(filterPlayableSongs(cache.songs), 900);
     } else {
       // Multiple server draws + diversify (single getRandomSongs(100) re-hears the same big catalogs)
       const batches = await Promise.all([
@@ -1878,11 +1879,14 @@ async function shuffleAll() {
       for (const batch of batches) {
         for (const s of batch) merged.set(s.id, s);
       }
-      songs = sampleDiverseSongs([...merged.values()], 500);
+      songs = sampleDiverseSongs(filterPlayableSongs([...merged.values()]), 500);
     }
-    if (!songs.length) return showToast("No songs found — try Sync Library first");
-    await player.playShuffled(songsWithUrls(songs));
-    showToast(`Shuffling ${songs.length} songs · artist-spread`);
+    const playable = songsWithUrls(songs);
+    if (!playable.length) {
+      return showToast("No playable songs — thumbs-down tracks are skipped. Try Sync Library.");
+    }
+    await player.playShuffled(playable);
+    showToast(`Shuffling ${playable.length} songs · skips 👎 · artist-spread`);
   } catch (e) {
     showToast(e.message);
   }
@@ -1999,11 +2003,17 @@ function renderFavorites() {
 
   panel.querySelector("#btn-open-playlists-from-fav")?.addEventListener("click", openPlaylists);
   panel.querySelector("#btn-play-fav-songs")?.addEventListener("click", () => {
-    player.playAll(songsWithUrls(songs));
+    // Filter again in case an artist was blocked after liking songs
+    const playable = songsWithUrls(filterPlayableSongs(songs));
+    if (!playable.length) return showToast("No playable liked songs (👎 skipped)");
+    player.playAll(playable);
   });
   panel.querySelector("#btn-shuffle-fav-songs")?.addEventListener("click", () => {
-    const pool = sampleDiverseSongs(songs, Math.min(songs.length, 900));
-    player.playShuffled(songsWithUrls(pool));
+    const filtered = filterPlayableSongs(songs);
+    const pool = sampleDiverseSongs(filtered, Math.min(filtered.length, 900));
+    const playable = songsWithUrls(pool);
+    if (!playable.length) return showToast("No playable liked songs (👎 skipped)");
+    player.playShuffled(playable);
   });
 }
 
@@ -2820,6 +2830,7 @@ async function enterAppOnline() {
   window.__tuneFriendOfflineOnly = false;
   setOfflineModeBanner(false);
   player.resolveSong = enrichSong;
+  player.isSongPlayable = (s) => !isSongPlayBlocked(s);
   setupMediaSession(player, () => api);
   showScreen("screen-main");
   showBottomDock(true);
@@ -2841,6 +2852,7 @@ async function enterAppOffline(config, { toast = true } = {}) {
   window.__tuneFriendOfflineOnly = true;
   api = new SubsonicAPI(config);
   player.resolveSong = enrichSong;
+  player.isSongPlayable = (s) => !isSongPlayBlocked(s);
   setupMediaSession(player, () => api);
   showScreen("screen-main");
   showBottomDock(true);
@@ -2911,6 +2923,7 @@ els.loginForm.addEventListener("submit", async (e) => {
     await testApi.ping();
     api = testApi;
     await saveConfig(config);
+    player.isSongPlayable = (s) => !isSongPlayBlocked(s);
     await enterAppOnline();
   } catch (err) {
     // Saved session + network down → enter offline (never wipe credentials)
@@ -2972,7 +2985,8 @@ onFavoritesChange(() => {
 function syncLikedToAndroidAuto() {
   if (!isNativeApp() || !canUseNativePlayer() || !api) return;
   try {
-    const songs = getLikedSongs();
+    // Never push thumbs-down / blocked-artist tracks to Auto or widget shuffle
+    const songs = filterPlayableSongs(getLikedSongs());
     const tracks = songs.map((s) => ({
       trackId: String(s.id),
       title: s.title || "Unknown",

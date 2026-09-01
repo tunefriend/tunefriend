@@ -246,10 +246,25 @@ export class Player {
     return result;
   }
 
+  _isQueueSongPlayable(song) {
+    if (!song) return false;
+    // Optional hook from app (blocked / thumbs-down)
+    if (typeof this.isSongPlayable === "function") {
+      try {
+        return !!this.isSongPlayable(song);
+      } catch {
+        return true;
+      }
+    }
+    return true;
+  }
+
   _computeNextIndex() {
     if (this.queue.length === 0) return -1;
     if (this.shuffle) {
-      if (this.queue.length === 1) return this.repeat ? 0 : -1;
+      if (this.queue.length === 1) {
+        return this.repeat && this._isQueueSongPlayable(this.queue[0]) ? 0 : -1;
+      }
       const recentIds = new Set(
         (this._recentTrackIds || []).map(String)
       );
@@ -260,10 +275,17 @@ export class Player {
       for (let i = 0; i < this.queue.length; i++) {
         if (i === this.index) continue;
         const s = this.queue[i];
+        if (!this._isQueueSongPlayable(s)) continue;
         if (recentIds.has(String(s.id))) continue;
         candidates.push(i);
       }
-      const pool = candidates.length ? candidates : [...Array(this.queue.length).keys()].filter((i) => i !== this.index);
+      let pool = candidates;
+      if (!pool.length) {
+        pool = [...Array(this.queue.length).keys()].filter(
+          (i) => i !== this.index && this._isQueueSongPlayable(this.queue[i])
+        );
+      }
+      if (!pool.length) return -1;
 
       let preferred = pool.filter((i) => {
         const a = this._artistKey(this.queue[i]);
@@ -278,8 +300,15 @@ export class Player {
       this._rememberPlay(this.queue[idx]);
       return idx;
     }
-    if (this.index < this.queue.length - 1) return this.index + 1;
-    if (this.repeat) return 0;
+    // Linear: skip blocked thumbs-down / blocked-artist tracks
+    for (let i = this.index + 1; i < this.queue.length; i++) {
+      if (this._isQueueSongPlayable(this.queue[i])) return i;
+    }
+    if (this.repeat) {
+      for (let i = 0; i < this.index; i++) {
+        if (this._isQueueSongPlayable(this.queue[i])) return i;
+      }
+    }
     return -1;
   }
 
@@ -371,7 +400,9 @@ export class Player {
       this._nativePosition = status.position || 0;
       if (status.duration > 0) this._duration = status.duration;
       this._nativePlaying = !!status.playing;
-      const wantsPlayback = status.wantsPlaying || session?.wasPlaying;
+      // Trust native wantsPlaying only — session.wasPlaying was restarting music
+      // over YouTube/calls after a notification when the user had paused or lost focus.
+      const wantsPlayback = !!status.wantsPlaying;
       if (!status.prepared && !status.playing && wantsPlayback && this.current && this._canAutoRecover()) {
         await this._loadCurrent();
         return;
@@ -384,13 +415,13 @@ export class Player {
           await nativeResume();
           let after = await nativeGetStatus();
           this._nativePlaying = !!after.playing;
-          if (!after.playing) {
+          if (!after.playing && after.wantsPlaying) {
             await this._loadCurrent();
             after = await nativeGetStatus();
             this._nativePlaying = !!after.playing;
           }
         } catch {
-          if (this._canAutoRecover()) await this._loadCurrent();
+          if (this._canAutoRecover() && wantsPlayback) await this._loadCurrent();
         }
       }
       if (status.prepared || status.playing || this._nativePlaying) {

@@ -455,9 +455,17 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
             PlaybackWidgetUpdater.updateAll(this);
             return;
         }
-        // Focus can be quietly lost overnight; re-request before starting audio.
+        // Never steal audio from an active call / YouTube on screen-on or health ticks.
         if (!hasAudioFocus) {
+            if (!mayRequestFocus(reason)) {
+                PlaybackWidgetUpdater.updateAll(this);
+                return;
+            }
             requestAudioFocus();
+            if (!hasAudioFocus) {
+                PlaybackWidgetUpdater.updateAll(this);
+                return;
+            }
         }
         acquireWakeLock();
         acquireWifiLock();
@@ -892,22 +900,41 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
         long now = SystemClock.elapsedRealtime();
         switch (focusChange) {
             case AudioManager.AUDIOFOCUS_LOSS:
-                // Call, another music app, etc. — stay paused until system grants focus again.
+                // Permanent loss (YouTube, another music app, long call takeover).
+                // Do NOT auto-resume later — that steals audio back after notifications.
+                hasAudioFocus = false;
+                shouldResumeAfterFocus = false;
                 if (!userPaused) {
-                    shouldResumeAfterFocus = wantsToPlay && isPrepared;
+                    // Treat as paused so health checks / screen-on won't restart over YouTube.
+                    wantsToPlay = false;
                     pauseForInterruption();
                 }
-                hasAudioFocus = false;
                 cancelResumeWatchdog();
                 cancelPlaybackHealthCheck();
+                mainHandler.removeCallbacks(deferredFocusResume);
+                PlaybackWidgetUpdater.updateAll(this);
                 break;
             case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
-            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
-                // Reels / short video / notification — do NOT re-steal focus on a timer.
+                // Phone call, brief interruption — pause and resume when focus returns.
                 if (now - lastResumeAt < 1200) return;
                 hasAudioFocus = false;
-                if (!userPaused) {
-                    shouldResumeAfterFocus = wantsToPlay && isPrepared;
+                if (!userPaused && wantsToPlay) {
+                    shouldResumeAfterFocus = isPrepared || mediaPlayer != null;
+                    pauseForInterruption();
+                } else {
+                    shouldResumeAfterFocus = false;
+                }
+                cancelResumeWatchdog();
+                cancelPlaybackHealthCheck();
+                mainHandler.removeCallbacks(deferredFocusResume);
+                break;
+            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
+                // Notification / nav prompt — pause (don't duck over a call/video) and
+                // only resume if we were actively wanting to play.
+                if (now - lastResumeAt < 1200) return;
+                hasAudioFocus = false;
+                if (!userPaused && wantsToPlay && isPlayingNow()) {
+                    shouldResumeAfterFocus = true;
                     pauseForInterruption();
                 }
                 cancelResumeWatchdog();
@@ -915,8 +942,11 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
                 break;
             case AudioManager.AUDIOFOCUS_GAIN:
                 hasAudioFocus = true;
-                mainHandler.removeCallbacks(deferredFocusResume);
-                mainHandler.postDelayed(deferredFocusResume, FOCUS_RESUME_DELAY_MS);
+                // Only auto-resume after TRANSIENT loss (calls), never after permanent LOSS.
+                if (shouldResumeAfterFocus && !userPaused && wantsToPlay) {
+                    mainHandler.removeCallbacks(deferredFocusResume);
+                    mainHandler.postDelayed(deferredFocusResume, FOCUS_RESUME_DELAY_MS);
+                }
                 break;
             default:
                 break;
@@ -928,21 +958,31 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
     }
 
     private void tryResumeAfterFocus() {
-        if (userPaused) {
+        if (userPaused || !shouldResumeAfterFocus) {
             shouldResumeAfterFocus = false;
             return;
         }
-        // Only resume when the system gave focus back (calls / Reels ended).
-        if (!hasAudioFocus) {
-            shouldResumeAfterFocus = shouldResumeAfterFocus || wantsToPlay;
+        // Only resume after a transient interruption (call) when we still want audio.
+        if (!wantsToPlay) {
+            shouldResumeAfterFocus = false;
             return;
         }
-        if (shouldResumeAfterFocus || (wantsToPlay && !isPlayingNow()) || isPlaybackStalled()) {
-            lastResumeAt = SystemClock.elapsedRealtime();
-            ensurePlaying("focus_gain");
-            if (isPlayingNow()) schedulePlaybackHealthCheck();
+        if (!hasAudioFocus) {
+            // Focus not really ours yet — wait; do not OR wantsToPlay into a sticky resume.
+            return;
         }
         shouldResumeAfterFocus = false;
+        lastResumeAt = SystemClock.elapsedRealtime();
+        ensurePlaying("focus_gain");
+        if (isPlayingNow()) schedulePlaybackHealthCheck();
+    }
+
+    /** User/play intents may request focus; background heal must not steal from calls/YouTube. */
+    private boolean mayRequestFocus(String reason) {
+        return "resume".equals(reason)
+            || "toggle".equals(reason)
+            || "focus_gain".equals(reason)
+            || "play".equals(reason);
     }
 
     private void scheduleResumeWatchdog() {
@@ -1009,12 +1049,9 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
             cancelResumeWatchdog();
             return;
         }
+        // Do not requestAudioFocus here — that plays over phone calls.
         if (!hasAudioFocus) {
-            requestAudioFocus();
-        }
-        // If another app still owns focus after re-request, don't fight a call.
-        if (!hasAudioFocus) {
-            scheduleResumeWatchdog();
+            cancelResumeWatchdog();
             return;
         }
         if (!isPlayingNow() || isPlaybackStalled()) {
@@ -1038,10 +1075,12 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
             cancelPlaybackHealthCheck();
             return;
         }
+        // If we lost focus (call / YouTube), stop healing until AUDIOFOCUS_GAIN.
         if (!hasAudioFocus) {
-            requestAudioFocus();
+            cancelPlaybackHealthCheck();
+            return;
         }
-        // Keep the FGS alive and re-acquire locks while we still want audio.
+        // Keep the FGS alive and re-acquire locks while we still hold focus.
         acquireWakeLock();
         acquireWifiLock();
         noteProgressIfAdvancing();
@@ -1056,11 +1095,8 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
         if (isPlaybackStalled()) {
             reloadAttemptCount = 0;
             reloadCurrentTrackAt(getPositionMs());
-        } else if (hasAudioFocus && !isPlayingNow()) {
+        } else if (!isPlayingNow()) {
             recoverPlayback();
-        } else if (!hasAudioFocus) {
-            // Wait for focus; still reschedule so we recover after a call ends overnight.
-            scheduleResumeWatchdog();
         } else {
             noteProgressIfAdvancing();
         }
@@ -1069,10 +1105,8 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
 
     private void recoverPlayback() {
         if (userPaused || !wantsToPlay) return;
-        if (!hasAudioFocus) {
-            requestAudioFocus();
-            if (!hasAudioFocus) return;
-        }
+        // Never steal focus during a call — wait for GAIN + shouldResumeAfterFocus.
+        if (!hasAudioFocus) return;
         acquireWakeLock();
         acquireWifiLock();
         if (mediaPlayer != null && isPrepared) {
